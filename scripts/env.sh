@@ -9,7 +9,7 @@ IMAGE_SIZE="200g"
 VOL="${SW_VOL:-/Volumes/SWWine}"
 
 # 11.16 because scripts/patches/ are byte-exact binary patches for this build. Stock
-# 11.21 hung forever compiling 32-bit .NET under Rosetta (see README).
+# 11.21 hung forever compiling 32-bit .NET under Rosetta.
 WINE_VERSION="11.16"
 WINE_FLAVOR="staging"
 WINE_APP="$VOL/wine-$WINE_FLAVOR-$WINE_VERSION/Wine Staging.app"
@@ -22,5 +22,5 @@ export WINEPREFIX="${SW_PREFIX:-$VOL/prefix-$WINE_VERSION}"
 export W_CACHE="$CACHE/winetricks"        # winetricks must not fill the local disk
 export XDG_CACHE_HOME="$CACHE/xdg"
 export TMPDIR="$VOL/tmp"
-export PATH="$WINE_APP/Contents/Resources/wine/bin:$VOL/bin:/opt/homebrew/bin:$PATH"
+export PATH="$WINE_APP/Contents/Resources/wine/bin:$VOL/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 export WINEDEBUG="${WINEDEBUG:--all}"

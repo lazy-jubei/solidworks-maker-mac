@@ -49,7 +49,8 @@ fi
 
 python3 -I "$PATCHES/comctl32-button-capture.py" "$SRC"
 
-export PATH="$LLVM/bin:/opt/homebrew/opt/bison/bin:/usr/bin:/bin:/opt/homebrew/bin"
+brew_prefix="$(brew --prefix)"
+export PATH="$LLVM/bin:$brew_prefix/opt/bison/bin:/usr/bin:/bin:$brew_prefix/bin"
 export TMPDIR="$VOL/tmp"
 mkdir -p "$OBJ"
 if [[ ! -f "$OBJ/Makefile" ]]; then

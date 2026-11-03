@@ -7,7 +7,7 @@ if (( $# > 1 )); then print -u2 'Usage: ./setup.sh [--dry-run|--help]'; exit 2; 
 case "${1:-}" in
   --help|-h)
     print 'Usage: ./setup.sh [--dry-run]'
-    print 'Prepare Wine for a first SOLIDWORKS installation. See README.md for the remaining steps.'
+    print 'Prepare Wine for a first SOLIDWORKS installation. Use scripts/install-guided.sh for the full installation.'
     exit 0 ;;
   --dry-run)
     for stage in "${stages[@]}"; do
@@ -20,11 +20,23 @@ case "${1:-}" in
 esac
 source "$setup_root/scripts/env.sh"
 # Refuse before creating files, mounting images or starting dependencies.
-python3 "$setup_root/scripts/tools/require-stopped.py" "$WINE_APP/Contents/Resources/wine/bin/wineserver"
-if [[ -f "$WINEPREFIX/drive_c/Program Files/Dassault Systemes/3DEXPERIENCE Launcher/3DEXPERIENCELauncher.exe" ]]; then
-  print -u2 'This prefix already has the Launcher installed. Use the Mac app shortcut, or configure a separate image and prefix for a new installation.'
-  exit 1
-fi
+# This guard must also work before Python has been installed.
+setup_server="$WINE_APP/Contents/Resources/wine/bin/wineserver"
+setup_processes="$(ps -axo comm=)"
+for setup_process in "${(@f)setup_processes}"; do
+  setup_process="${setup_process#"${setup_process%%[![:space:]]*}"}"
+  if [[ "${setup_process:t}" == wineserver && "${setup_process:A}" == "${setup_server:A}" ]]; then
+    print -u2 'Save and close applications, then stop this Wine prefix before replacing its runtime.'
+    exit 1
+  fi
+done
+refuse_installed_prefix() {
+  if [[ -f "$WINEPREFIX/drive_c/Program Files/Dassault Systemes/3DEXPERIENCE Launcher/3DEXPERIENCELauncher.exe" ]]; then
+    print -u2 'This prefix already has the Launcher installed. Use the Mac app shortcut, or configure a separate image and prefix for a new installation.'
+    exit 1
+  fi
+}
+refuse_installed_prefix
 "$setup_root/scripts/tools/check-setup-requirements.sh"
 if [[ "${SW_CONFIG_FILE:h:A}" == "$setup_root" && "${SW_CONFIG_FILE:t}" == config.local.zsh && ! -f "$SW_CONFIG_FILE" ]]; then
   cp "$setup_root/config.example.zsh" "$SW_CONFIG_FILE"
@@ -37,6 +49,8 @@ for stage in "${stages[@]}"; do
   else
     print "Running $stage…"
     "$setup_root/scripts/$stage"
+    # An existing image may have been unmounted during the first check.
+    if [[ "$stage" == 01-storage.sh ]]; then refuse_installed_prefix; fi
   fi
 done
-print 'Wine preparation complete. Continue with Install SOLIDWORKS in README.md.'
+print 'Wine preparation complete.'

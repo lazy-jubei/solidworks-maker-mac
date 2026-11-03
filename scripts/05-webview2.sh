@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Install Microsoft's WebView2 runtime required by SWXDesktopLauncher.exe.
 # Rendering is configured by 10-fresh-signin.sh after the Wine/token/DXMT fixes.
-set -u
+set -eu
 source "${0:A:h}/env.sh"
 INST="$CACHE/installers/MicrosoftEdgeWebview2Setup.exe"
 [[ -f "$INST" ]] || curl -fL -o "$INST" "https://go.microsoft.com/fwlink/p/?LinkId=2124703"

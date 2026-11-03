@@ -97,4 +97,17 @@ with TemporaryDirectory(prefix='sw-setup-check-') as directory:
     assert calls.read_text().splitlines() == ['verb:corefonts', 'stop:-w', 'verb:vcrun2022']
     assert 'Dependency vcrun2022 failed' in dependency.stderr
 
+# Also refuse an existing Launcher first discovered after its image is attached.
+with TemporaryDirectory(prefix='sw-mounted-setup-check-') as directory:
+    base = Path(directory)
+    project, prefix, calls, env, names = fixture(base)
+    launcher = prefix / 'drive_c/Program Files/Dassault Systemes/3DEXPERIENCE Launcher/3DEXPERIENCELauncher.exe'
+    executable(project / 'scripts/01-storage.sh',
+               'print 01-storage.sh >> "$SW_SETUP_TEST_CALLS"\n'
+               f'mkdir -p {shlex.quote(str(launcher.parent))}\n'
+               f'touch {shlex.quote(str(launcher))}\n')
+    mounted = subprocess.run(['zsh', str(project / 'setup.sh')], env=env, capture_output=True, text=True)
+    assert mounted.returncode != 0 and 'already has the Launcher' in mounted.stderr
+    assert calls.read_text().splitlines() == ['prerequisites', '01-storage.sh']
+
 print('Passed: dry-run, active/installed refusal, ordering, failure propagation, config preservation and dependency failure.')

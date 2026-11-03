@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Install the 3DEXPERIENCE Launcher into the prefix.
 # The MSI comes from the platform dashboard (see README) and is kept in cache/installers.
-set -u
+set -eu
 source "${0:A:h}/env.sh"
 MSI="$CACHE/installers/3DEXPERIENCELauncher.msi"
 LOG="$ROOT/logs"; mkdir -p "$LOG"
