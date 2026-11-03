@@ -1,0 +1,30 @@
+#!/bin/zsh
+# Download and unpack the pinned Wine build and winetricks; verify they run.
+set -eu
+source "${0:A:h}/env.sh"
+python3 "${0:A:h}/tools/require-stopped.py" "$WINE_APP/Contents/Resources/wine/bin/wineserver"
+TAR="$CACHE/${WINE_URL:t}"
+[[ -f "$TAR" ]] || { curl -fL -o "$TAR.part" "$WINE_URL"; mv "$TAR.part" "$TAR"; }
+shasum -a 256 "$TAR" | tee "$CACHE/${WINE_URL:t}.sha256"
+if [[ ! -d "$WINE_APP" ]]; then
+  mkdir -p "${WINE_APP:h}"
+  tar -xJf "$TAR" -C "${WINE_APP:h}"
+fi
+ls "${WINE_APP:h}"
+xattr -dr com.apple.quarantine "$WINE_APP" 2>/dev/null || true
+# Rosetta 32<->64-bit mode-switch fix and wineserver crash fix, from the altium-wine kit
+# (LGPL 2.1+, github.com/lazy-jubei/altium-wine). Originals are kept as *.stock.
+RES="$WINE_APP/Contents/Resources/wine"
+CPU="$RES/lib/wine/x86_64-windows/wow64cpu.dll"
+if [[ ! -f "$CPU.stock" ]]; then
+  cp "$CPU" "$CPU.stock"
+  python3 -I "${0:A:h}/patches/wow64cpu-rosetta-trampoline.py" "$CPU.stock" "$CPU"
+fi
+if [[ ! -f "$RES/bin/wineserver.stock" ]]; then
+  cp "$RES/bin/wineserver" "$RES/bin/wineserver.stock"
+  python3 -I "${0:A:h}/patches/wineserver-wakeup-epipe.py" "$RES/bin/wineserver.stock" "$RES/bin/wineserver"
+  codesign -s - -f "$RES/bin/wineserver"
+fi
+[[ -x "$VOL/bin/winetricks" ]] || { curl -fL -o "$VOL/bin/winetricks" "$WINETRICKS_URL"; chmod +x "$VOL/bin/winetricks"; }
+wine --version
+winetricks --version

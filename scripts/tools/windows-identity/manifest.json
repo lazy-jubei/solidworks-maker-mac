@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Windows identity for 3DEXPERIENCE",
+  "version": "1.0",
+  "description": "Makes 3DEXPERIENCE pages see Windows so they offer Install. Runs on no other sites.",
+  "content_scripts": [{
+    "matches": ["https://*.3dexperience.3ds.com/*"],
+    "js": ["identity.js"],
+    "run_at": "document_start",
+    "all_frames": true,
+    "world": "MAIN"
+  }]
+}
