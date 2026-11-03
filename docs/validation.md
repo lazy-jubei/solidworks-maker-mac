@@ -117,3 +117,29 @@ subsequent empty Mate tool retained the committed value. After saving and reopen
 the mate dimension was 0.06 m and the two component Z translations differed by
 0.06 m. The saved assembly was clean. This tests another native confirmation path
 with the existing capture guard; no new Wine module change was required.
+
+## Revolve and body-pattern checks
+
+The standard New Document dialog opened and a native click created a blank part
+in the same running CAD session. A 360-degree revolve produced one hollow cylinder
+with volume 0.000028274333882308141 m³, matching a 20/10 mm radius, 30 mm long ring.
+
+A new blank part then passed the complete revolve/body-pattern sequence: three
+equal-volume bodies with X centres at 0, 60 and 120 mm, undo back to one body,
+redo to three, pattern suppression/restore, ordinary incremental rebuild, native
+save and reopen. Final combined volume was 0.000084823001646924416 m³. Save errors
+and warnings were zero.
+
+The first late-bound test attempted to assign the direction/body object properties
+of a standalone pattern definition and got no feature. Using the documented marked
+preselection route created the correct pattern. Getters on the standalone definition
+still showed no references before creation, so those getters alone do not establish
+whether preselection will work. No Wine patch was introduced for this client setup.
+
+The pattern count was then edited 3->4 with native mouse/keyboard input and green
+confirmation; the editor closed and the feature tree showed four solid bodies.
+Native Windows Ctrl+Z restored count 3, and Ctrl+Y restored count 4. Read-only checks
+verified the feature parameter, individual volumes and centres after each operation.
+After native zoom-to-fit, save/reopen retained four bodies at X=0/60/120/180 mm,
+combined volume 0.00011309733552923255 m³, with no unsaved changes. This does not
+establish macOS Command-key mappings or manual viewport FPS.

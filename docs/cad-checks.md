@@ -72,7 +72,32 @@ and reopen, and mate persistence. One distance mate leaves other degrees of
 freedom; this is not a fully constrained assembly test. `AddMate5` status is
 checked against `swAddMateError_NoError`, whose value is 1.
 
-`build-cad-checks.sh` compiles the edge, STEP and assembly-edit helpers. The
+`build-cad-checks.sh` compiles the edge, STEP, assembly-edit and revolve helpers. The
 document helper comes from `build-signin-tools.sh` and retains its original
-threading behavior; the newer three helpers use STA. Only their timed API calls
+threading behavior; the helpers built by `build-cad-checks.sh` use STA. Their timed API calls
 exclude log-writing time.
+
+## Revolve, body pattern and undo/redo
+
+Create a blank part through the normal New Document dialog. Inspect its title
+with `wine "$VOL/tools/SwInteractive.exe" status`, then pass that exact title:
+
+```zsh
+wine "$VOL/tools/SwRevolveOps.exe" 'Part1' \
+  'C:\users\Public\Documents\cad-check-revolve.SLDPRT'
+```
+
+Replace `Part1` with the observed new title. This helper requires the active
+document to be an untitled, clean part with no solid, Sketch1 or active sketch;
+it refuses an existing output and expects standard English plane/sketch names.
+It creates a rectangle and centreline, revolves
+360 degrees, checks one hollow cylinder and saves a checkpoint. It then creates
+a three-body linear pattern at 60 mm spacing, checks undo/redo and suppression/
+restore, and saves/reopens the result. Direction and seed references use marked
+selection before CreateDefinition. The build script also compiles this helper.
+
+Each ring has 20 mm outer radius, 10 mm inner radius and 30 mm length, so its
+volume is `π × (0.02² − 0.01²) × 0.03` m³. Checks cover body count, individual
+volume, centres and 60 mm placement, using 1e-12 m³ volume and 1e-8 m position
+tolerances. The helper verifies its saved test part is still active before
+session-wide undo, redo and incremental rebuild calls.
