@@ -73,7 +73,7 @@ freedom; this is not a fully constrained assembly test. `AddMate5` status is
 checked against `swAddMateError_NoError`, whose value is 1.
 
 `build-cad-checks.sh` compiles the edge, STEP, assembly-edit, revolve, shell,
-configuration and repeated-dimension helpers. The
+configuration, repeated-dimension and STL helpers. The
 document helper comes from `build-signin-tools.sh` and retains its original
 threading behavior; the helpers built by `build-cad-checks.sh` use STA. Their timed API calls
 exclude log-writing time.
@@ -167,3 +167,29 @@ rebuild, including after a failure. A failure leaves the separate test copy
 available for diagnosis. It refuses existing outputs and dirty open documents;
 only the observed saved test part is edited. A passing run does not establish
 that the earlier intermittent stale-body failure is fixed.
+
+## STL export
+
+With the saved baseline cut-box part active, export a new binary STL in millimetres:
+
+```zsh
+wine "$VOL/tools/SwStlOps.exe" \
+  'C:\users\Public\Documents\cad-check-base.SLDPRT' \
+  'C:\users\Public\Documents\cad-check-box.stl'
+python3 scripts/check-stl.py \
+  "$WINEPREFIX/drive_c/users/Public/Documents/cad-check-box.stl"
+```
+
+Run the mesh check only after the export command succeeds. The exporter requires
+the exact active saved part, one solid and the baseline cut-box volume. It clears
+selection before exporting, selects binary format and millimetres without preview,
+then restores and verifies the prior export preferences. It refuses an existing
+output and verifies that the source part remains saved under its original path.
+
+The independent mesh check expects this particular 50 × 30 × 25 mm box and
+10 mm through-hole. It checks binary length, finite coordinates, nondegenerate
+triangles, closed manifold edges, consistent winding, connectivity, bounds,
+through-hole topology and signed volume within 0.5% of the exact solid.
+This is a regression fixture check, not a general printability checker or a
+physical print test. STL has no unit field; millimetres are verified from the
+known model bounds.

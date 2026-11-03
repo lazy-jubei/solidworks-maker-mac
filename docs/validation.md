@@ -222,3 +222,20 @@ body. They do not establish its cause or prove it fixed. The older fresh-part
 comparison used a full rebuild between setter tests; this diagnostic deliberately
 omits it. `SwDimensionCycles` is included in the optional CAD helper build so this
 specific behavior can be checked again without masking a failure.
+
+## STL export checks
+
+The saved baseline cut-box part exported as binary STL in millimetres with zero
+errors and warnings. The source retained its original path and clean flag, and
+the previous export preferences were verified afterward. The first helper attempt
+stopped before export on a false return from setting an already-selected format;
+it now skips unchanged settings and verifies preference readback instead.
+
+Independent parsing found 168 triangles, 84 vertices, exactly 50 × 30 × 25 mm
+bounds, closed edges, consistent winding, one connected surface, and Euler
+characteristic zero (the expected through-hole topology). Signed volume was
+35545.7371 mm³ versus the exact 35536.5046 mm³: approximately 0.026% difference,
+within the diagnostic's 0.5% tessellation tolerance. No resolution preference was
+changed. This verifies the exported fixture, not general printability or a physical
+print. Negative controls made from the actual export correctly rejected an open
+mesh, a 1000× scale error and inconsistent triangle winding.
