@@ -136,7 +136,9 @@ class WinInput
             }else return 3;
             return 0;
         }
-        if(!SetForegroundWindow(target)){Console.WriteLine("Could not foreground target");return 2;}Thread.Sleep(150);
+        if(GetForegroundWindow()!=target && !SetForegroundWindow(target)){Console.WriteLine("Could not foreground target");return 2;}
+        Thread.Sleep(150);
+        if(GetForegroundWindow()!=target){Console.WriteLine("Target lost foreground; input cancelled");return 2;}
         if(a[1]=="click"){
             POINT p=new POINT{x=int.Parse(a[2]),y=int.Parse(a[3])};ClientToScreen(target,ref p);SetCursorPos(p.x,p.y);Thread.Sleep(100);
             Send(new INPUT{mouseFlags=2});Send(new INPUT{mouseFlags=4});
