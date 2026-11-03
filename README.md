@@ -17,4 +17,12 @@ you through installing SOLIDWORKS using your own Makers subscription and signing
 
 After setup, open **SolidWorks (Wine)** in your Applications folder.
 
+## Details
+
+The installer downloads the project, installs prerequisites, and builds a patched
+Wine environment. A separate Chrome browser identifies itself as Windows so the
+Makers dashboard offers the installer, without changing your usual browser.
+You sign in and download SOLIDWORKS directly from Dassault Systèmes. The script
+then reads your installed shortcut’s settings and creates the Mac app shortcut.
+
 Licensed under [LGPL-2.1-or-later](LICENSE). [Third-party notices](THIRD_PARTY_NOTICES.md).
