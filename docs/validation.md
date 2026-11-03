@@ -160,3 +160,24 @@ A source read from the network share and the launcher both paused during startup
 then recovered without restarting Wine. That is evidence of storage latency, not
 a diagnosis of every pause. The disk image remained mounted throughout this test;
 Finder auto-mount from an unmounted image remains untested.
+
+## Shell checks
+
+A new blank part passed a 50 × 30 × 25 mm solid-box extrusion, 2 mm inward shell
+with one face removed, thickness edit to 3 mm, suppression/restore, ordinary
+incremental rebuild and save/reopen. The reopened 3 mm shell volume was
+0.000014268000000000003 m³, matching the analytical open-box volume, and the
+feature definition retained 0.003 m thickness. Saves reported zero errors and
+warnings. The new shell helper is included in `build-cad-checks.sh`.
+
+A native PropertyManager edit then changed 3 mm to 4 mm using numeric input,
+Tab and green confirmation. Read-only checks confirmed thickness and volume
+(0.000018096 m³), and the part saved clean. Reopening the editor, entering 5 mm
+and clicking native Cancel retained the 4 mm thickness and volume. The document
+was nevertheless marked modified after Cancel; this is an observation without
+a Windows comparison establishing whether it is Wine-specific. The reopen guard
+refused the dirty document, so it was explicitly saved before the final reopen.
+That reopen retained 4 mm walls, the expected volume, and a clean document flag.
+The native window capture showed the open cavity and Shell1 in the feature tree.
+The updated build script compiled all five helpers successfully; the shell helper
+also refused an existing output path before attaching to CAD.

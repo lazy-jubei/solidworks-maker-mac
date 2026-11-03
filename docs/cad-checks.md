@@ -5,7 +5,7 @@ first. The checks create local test files and leave their saved documents open.
 They do not test PLM. Choose new output paths for every run.
 
 Compile the ordinary helpers with `scripts/build-signin-tools.sh`, then compile
-the edge and STEP checks with `scripts/build-cad-checks.sh`. The latter locates
+the additional CAD checks with `scripts/build-cad-checks.sh`. The latter locates
 the installed API constants assembly; if multiple installations exist, set
 `SW_SWCONST_DLL` to the macOS path of the intended `SolidWorks.Interop.swconst.dll`.
 It compiles helpers without starting a CAD regression.
@@ -72,7 +72,7 @@ and reopen, and mate persistence. One distance mate leaves other degrees of
 freedom; this is not a fully constrained assembly test. `AddMate5` status is
 checked against `swAddMateError_NoError`, whose value is 1.
 
-`build-cad-checks.sh` compiles the edge, STEP, assembly-edit and revolve helpers. The
+`build-cad-checks.sh` compiles the edge, STEP, assembly-edit, revolve and shell helpers. The
 document helper comes from `build-signin-tools.sh` and retains its original
 threading behavior; the helpers built by `build-cad-checks.sh` use STA. Their timed API calls
 exclude log-writing time.
@@ -101,3 +101,23 @@ volume is `π × (0.02² − 0.01²) × 0.03` m³. Checks cover body count, indi
 volume, centres and 60 mm placement, using 1e-12 m³ volume and 1e-8 m position
 tolerances. The helper verifies its saved test part is still active before
 session-wide undo, redo and incremental rebuild calls.
+
+## Shell and wall thickness
+
+Create another clean blank part and use its observed title with a new output:
+
+```zsh
+wine "$VOL/tools/SwShellOps.exe" 'Part2' \
+  'C:\users\Public\Documents\cad-check-shell.SLDPRT'
+```
+
+This check requires standard English plane/sketch names and the same blank-part
+conditions as the revolve helper. It makes a 50 × 30 × 25 mm solid, saves a
+checkpoint, removes the Z=25 mm face with a 2 mm inward shell, then edits the
+wall thickness to 3 mm. It checks one solid and analytical volume at each stage,
+shell suppression/restore, ordinary incremental rebuild, save/reopen and the
+persisted thickness. An open box of thickness `t` has volume
+`0.05 × 0.03 × 0.025 − (0.05−2t) × (0.03−2t) × (0.025−t)` m³.
+The volume tolerance is 1e-12 m³. The helper refuses an existing output path.
+It exercises API operations; separate native mouse/keyboard validation is
+recorded in `validation.md`.
