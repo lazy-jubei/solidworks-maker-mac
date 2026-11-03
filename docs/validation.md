@@ -257,3 +257,18 @@ the subsequent F action passed; both macOS modifier state and Wine's Shift,
 Control and middle-button state were released. This was a test-helper correction;
 no Wine runtime patch was needed. These are functional input checks, not a frame-rate
 or physical smoothness benchmark.
+
+## Native Hole Wizard
+
+On a separate saved cut-box copy, the native Hole Wizard toolbar command loaded
+the ANSI Inch standard, hole types and sizes. The Positions tab entered its sketch,
+a native click placed one hole away from the existing cut, and normal green
+confirmation created a HoleWzd counterbore feature.
+
+The ANSI Inch #00 binding-head selection produced a 1.397 mm through-hole,
+3.175 mm counterbore diameter and 0.7112 mm counterbore depth. Read-only feature
+inspection and analytical removed-volume checks agreed. Saving reported zero
+errors and warnings; reopening retained the feature, dimensions and clean flag,
+with volume 0.000035493644171874541 m³. The database and confirmation paths worked
+without another Wine patch or a CAD crash. This verifies that specific hole type
+and standard, not all Hole Wizard options or Toolbox component insertion.
