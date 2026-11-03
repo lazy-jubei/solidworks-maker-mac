@@ -4,7 +4,7 @@
 # Enter credentials in the vendor's form; this script never reads them.
 set -eu
 source "${0:A:h}/env.sh"
-for helper in ConfirmDialog WebViewWindow WinInput; do
+for helper in ConfirmDialog WebViewWindow WinInput ExistingCad; do
   [[ -f "$VOL/tools/$helper.exe" ]] || { print -u2 "Missing $VOL/tools/$helper.exe (compile scripts/tools/$helper.cs with .NET Framework64 csc.exe)"; exit 1; }
 done
 export SW_REPORT_STANDARD_INTEGRITY=1
@@ -16,9 +16,4 @@ export WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--disable-gpu --in-process-gpu --d
 # Wine's HTTP Basic prompt is spurious for this IAM host. Cancel only that exact
 # host's prompt. Detach only the official cross-process login browser to avoid
 # the Mac driver's foreign-parent GDI painting failure. No credential handling.
-python3 - "${0:A:h}/tools/signin-monitor.py" "$VOL/tools" <<'PYCODE'
-import subprocess,sys
-subprocess.Popen([sys.executable,sys.argv[1],sys.argv[2]],stdin=subprocess.DEVNULL,
-                 stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-PYCODE
-exec "${0:A:h}/run-solidworks.sh"
+exec python3 "${0:A:h}/tools/launch-once.py" "$VOL/tools" "${0:A:h}/run-solidworks.sh"
