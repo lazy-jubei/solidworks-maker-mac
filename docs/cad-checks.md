@@ -72,7 +72,8 @@ and reopen, and mate persistence. One distance mate leaves other degrees of
 freedom; this is not a fully constrained assembly test. `AddMate5` status is
 checked against `swAddMateError_NoError`, whose value is 1.
 
-`build-cad-checks.sh` compiles the edge, STEP, assembly-edit, revolve, shell and configuration helpers. The
+`build-cad-checks.sh` compiles the edge, STEP, assembly-edit, revolve, shell,
+configuration and repeated-dimension helpers. The
 document helper comes from `build-signin-tools.sh` and retains its original
 threading behavior; the helpers built by `build-cad-checks.sh` use STA. Their timed API calls
 exclude log-writing time.
@@ -143,3 +144,26 @@ uses ordinary incremental rebuild, and checks the dimension and analytical
 volume. The volume tolerance is 1e-12 m³. Standard English feature names are
 required. Creating the configuration activates it; the helper avoids a
 redundant ShowConfiguration2 call when it is already active.
+
+## Repeated dimension and incremental rebuild diagnostic
+
+The optional `SwDimensionCycles` diagnostic also starts from the saved baseline
+cut part and saves a separate copy. Choose the client apartment (`sta` or `mta`)
+and setter (`legacy` for SystemValue or `current` for SetSystemValue3):
+
+```zsh
+wine "$VOL/tools/SwDimensionCycles.exe" \
+  'C:\users\Public\Documents\cad-check-base.SLDPRT' \
+  'C:\users\Public\Documents\cad-check-dimension-sta-current.SLDPRT' \
+  sta current
+```
+
+Run other combinations separately with new output paths, after the preceding
+command exits successfully. Each run changes depth ten times (30, 21, 42, 27,
+50, 24, 39, 26, 45 and 25 mm), requires ordinary incremental rebuild, and checks
+both solid-body and mass-property volume against the cut-box analytical result.
+It records rebuild-needed flags and checks save/reopen. It never calls full
+rebuild, including after a failure. A failure leaves the separate test copy
+available for diagnosis. It refuses existing outputs and dirty open documents;
+only the observed saved test part is edited. A passing run does not establish
+that the earlier intermittent stale-body failure is fixed.

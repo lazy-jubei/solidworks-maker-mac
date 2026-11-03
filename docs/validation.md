@@ -205,3 +205,20 @@ and volume after each click; both configuration states were clean. The rendered 
 and ConfigurationManager check mark were inspected. The public build script
 compiled all six helpers, and the configuration helper refused an existing output
 before attaching to CAD.
+
+## Repeated incremental rebuild investigation
+
+Four separate saved copies of the baseline cut part each passed ten depth edits:
+STA and MTA clients, each using the legacy SystemValue setter and current
+SetSystemValue3 setter. Depths varied from 21 to 50 mm and ended at 25 mm.
+Every edit used only ordinary EditRebuild3, with no full-rebuild call or fallback.
+Both solid-body and mass-property volumes matched analytical geometry after all
+40 edits; the largest absolute volume error was 2.71e-20 m³, within the 1e-12 m³
+tolerance. Rebuild-needed flags were clear after every measured rebuild, and all
+four copies saved/reopened correctly with zero save errors or warnings.
+
+These repeated saved-part runs did not reproduce the earlier intermittent stale
+body. They do not establish its cause or prove it fixed. The older fresh-part
+comparison used a full rebuild between setter tests; this diagnostic deliberately
+omits it. `SwDimensionCycles` is included in the optional CAD helper build so this
+specific behavior can be checked again without masking a failure.
