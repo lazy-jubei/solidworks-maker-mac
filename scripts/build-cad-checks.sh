@@ -14,7 +14,7 @@ fi
 [[ -f "$const_dll" ]] || { print -u2 'SW_SWCONST_DLL does not name a file'; exit 1; }
 mkdir -p "$VOL/tools"
 const_windows="$(winepath -w "$const_dll")"
-for name in SwExportOps SwEdgeOps SwAssemblyOps SwRevolveOps SwShellOps SwConfigOps SwDimensionCycles SwStlOps; do
+for name in SwExportOps SwEdgeOps SwAssemblyOps SwRevolveOps SwShellOps SwConfigOps SwDimensionCycles SwDimensionUi SwStlOps; do
   src="$(winepath -w "$ROOT/scripts/tools/$name.cs")"
   out="$(winepath -w "$VOL/tools/$name.exe")"
   wine 'C:\windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' \
