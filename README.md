@@ -26,8 +26,8 @@ You sign in and download SOLIDWORKS directly from Dassault Systèmes. The script
 then reads your installed shortcut’s settings and creates the Mac app shortcut.
 
 Wine 11.16 is patched to support the installer’s ZIP extraction and MSI feature
-selection, work around Rosetta’s transitions between 32-bit and 64-bit code, and
-report Apple Silicon correctly during startup. An OpenGL/GDI presentation patch
+selection. On Apple Silicon, it also enables a Rosetta mode-switch workaround and
+corrects ARM64 host reporting during startup. An OpenGL/GDI presentation patch
 fixes viewport clipping on macOS, and a targeted mouse-capture fix lets the feature
 editor’s OK/Cancel buttons receive clicks correctly.
 

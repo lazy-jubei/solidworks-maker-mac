@@ -13,7 +13,8 @@ for command in subprocess.check_output(['ps','-axo','comm='],text=True).splitlin
         sys.exit('Close and stop the selected Wine prefix before installing its control DLL.')
 PY
 python3 "${0:A:h}/patches/comctl32-button-capture.py" "$SRC"
-export PATH="$BUILD/llvm-mingw/bin:/opt/homebrew/opt/bison/bin:/usr/bin:/bin:/opt/homebrew/bin"
+brew_prefix="$(brew --prefix)"
+export PATH="$BUILD/llvm-mingw/bin:$brew_prefix/opt/bison/bin:/usr/bin:/bin:$brew_prefix/bin"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll > "$ROOT/logs/button-capture-build.log" 2>&1
 python3 - "$OBJ/dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll" "$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/comctl32_v6.dll" "$WINEPREFIX/drive_c/windows/system32/comctl32_v6.dll" <<'PY'

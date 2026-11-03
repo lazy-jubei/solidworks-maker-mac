@@ -10,8 +10,12 @@ source "${0:A:h}/env.sh"
 if [[ "${SW_GRAPHICS:-mac}" == x11 ]]; then
   export DYLD_FALLBACK_LIBRARY_PATH="/opt/X11/lib:/usr/lib"
 fi
-# Apple Silicon is x64 on ARM64, and JS0GROUP.dll fails to load its licensing code unless told so.
-export SW_REPORT_ARM64=1
+# Correct the host reported under Rosetta; keep native Intel reporting on Intel Macs.
+if [[ "$SW_HOST_ARM64" == 1 ]]; then
+  export SW_REPORT_ARM64=1
+else
+  unset SW_REPORT_ARM64
+fi
 TENANT="${SW_TENANT:?Set SW_TENANT in config.local.zsh from your own SOLIDWORKS shortcut}"
 REGISTRY="${SW_REGISTRY:-https://eu1-makers-registry.3dexperience.3ds.com}"
 W='C:\Program Files\Dassault Systemes\SOLIDWORKS 3DEXPERIENCE R2026x\win_b64\code\bin'

@@ -17,6 +17,12 @@ WINE_URL="https://github.com/Gcenx/macOS_Wine_builds/releases/download/$WINE_VER
 WINETRICKS_VERSION="20260125"
 WINETRICKS_URL="https://raw.githubusercontent.com/Winetricks/winetricks/$WINETRICKS_VERSION/src/winetricks"
 
+# Detect physical Apple Silicon even when the shell itself runs under Rosetta.
+SW_HOST_ARM64=0
+if [[ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then
+  SW_HOST_ARM64=1
+fi
+
 export WINEARCH=win64
 export WINEPREFIX="${SW_PREFIX:-$VOL/prefix-$WINE_VERSION}"
 export W_CACHE="$CACHE/winetricks"        # winetricks must not fill the local disk

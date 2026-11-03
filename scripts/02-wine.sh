@@ -16,7 +16,7 @@ xattr -dr com.apple.quarantine "$WINE_APP" 2>/dev/null || true
 # (LGPL 2.1+, github.com/lazy-jubei/altium-wine). Originals are kept as *.stock.
 RES="$WINE_APP/Contents/Resources/wine"
 CPU="$RES/lib/wine/x86_64-windows/wow64cpu.dll"
-if [[ ! -f "$CPU.stock" ]]; then
+if [[ "$SW_HOST_ARM64" == 1 && ! -f "$CPU.stock" ]]; then
   cp "$CPU" "$CPU.stock"
   python3 -I "${0:A:h}/patches/wow64cpu-rosetta-trampoline.py" "$CPU.stock" "$CPU"
 fi
