@@ -72,7 +72,7 @@ and reopen, and mate persistence. One distance mate leaves other degrees of
 freedom; this is not a fully constrained assembly test. `AddMate5` status is
 checked against `swAddMateError_NoError`, whose value is 1.
 
-`build-cad-checks.sh` compiles the edge, STEP, assembly-edit, revolve and shell helpers. The
+`build-cad-checks.sh` compiles the edge, STEP, assembly-edit, revolve, shell and configuration helpers. The
 document helper comes from `build-signin-tools.sh` and retains its original
 threading behavior; the helpers built by `build-cad-checks.sh` use STA. Their timed API calls
 exclude log-writing time.
@@ -121,3 +121,25 @@ persisted thickness. An open box of thickness `t` has volume
 The volume tolerance is 1e-12 m³. The helper refuses an existing output path.
 It exercises API operations; separate native mouse/keyboard validation is
 recorded in `validation.md`.
+
+## Part configurations
+
+Use the saved baseline cut part from `SwOperations`, with one configuration:
+
+```zsh
+wine "$VOL/tools/SwConfigOps.exe" \
+  'C:\users\Public\Documents\cad-check-base.SLDPRT' \
+  'C:\users\Public\Documents\cad-check-configurations.SLDPRT'
+```
+
+The helper refuses dirty open documents and existing outputs, verifies the
+baseline 25 mm cut-box geometry, and saves a separate part before editing.
+It creates `CodexTall`, sets its extrusion depth to 40 mm using a specific
+configuration dimension edit, and checks that switching back retains the
+original 25 mm depth. It suppresses the cut in CodexTall only, verifies that
+the original configuration still has its hole, restores the cut, then saves
+and reopens both configurations. Each switch verifies the active configuration,
+uses ordinary incremental rebuild, and checks the dimension and analytical
+volume. The volume tolerance is 1e-12 m³. Standard English feature names are
+required. Creating the configuration activates it; the helper avoids a
+redundant ShowConfiguration2 call when it is already active.

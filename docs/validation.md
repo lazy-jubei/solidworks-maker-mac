@@ -181,3 +181,27 @@ That reopen retained 4 mm walls, the expected volume, and a clean document flag.
 The native window capture showed the open cavity and Shell1 in the feature tree.
 The updated build script compiled all five helpers successfully; the shell helper
 also refused an existing output path before attaching to CAD.
+
+## Part configuration checks
+
+A separate copy of the baseline cut part passed creation of `CodexTall`, a
+configuration-specific extrusion-depth edit from 25 to 40 mm, repeated switching,
+and cut suppression confined to CodexTall. The original configuration retained
+its 25 mm depth and hole. Both dimensions and analytical volumes matched after
+ordinary incremental rebuild and save/reopen: Default volume
+0.000035536504591506382 m³, CodexTall volume 0.000056858407346410207 m³. Suppressing
+the cut in CodexTall produced the expected 0.00006 m³ solid; restoring it recovered
+the hole. Saves reported zero errors and warnings. No full-rebuild fallback ran.
+
+The initial test client treated a redundant ShowConfiguration2 call as a failure
+after AddConfiguration2 had already activated CodexTall. Read-only inspection
+confirmed the requested configuration was active; the helper now avoids that
+redundant switch and verifies the resulting active name. The corrected complete
+sequence passed on a new copy. This was a client assertion issue, not a CAD crash.
+
+Native double-clicks in ConfigurationManager then switched to Default and back
+to CodexTall. Read-only inspection confirmed the expected configuration, depth
+and volume after each click; both configuration states were clean. The rendered model
+and ConfigurationManager check mark were inspected. The public build script
+compiled all six helpers, and the configuration helper refused an existing output
+before attaching to CAD.
