@@ -3,13 +3,18 @@
 # recorded, but re-running hangs in `wineserver -w` once the Launcher service is installed.
 # Verbs come from community reports of SolidWorks under Wine (dotnet48, vcrun,
 # win10); see notes in README.md.
-set -u
+set -eu
 source "${0:A:h}/env.sh"
 LOG="$ROOT/logs"; mkdir -p "$LOG" "$W_CACHE" "$XDG_CACHE_HOME"
 for verb in corefonts vcrun2022 dotnet48 msxml6 win11; do
   echo "=== $verb $(date +%T)"
-  winetricks -q --force "$verb" > "$LOG/winetricks-$verb.log" 2>&1
-  echo "=== $verb rc=$? $(date +%T)"
+  if winetricks -q --force "$verb" > "$LOG/winetricks-$verb.log" 2>&1; then
+    echo "=== $verb rc=0 $(date +%T)"
+  else
+    verb_result=$?
+    print -u2 "Dependency $verb failed; see $LOG/winetricks-$verb.log"
+    exit "$verb_result"
+  fi
   wineserver -w
 done
 # The installer checks these VC11 DLLs' versions and ships real copies. Wine has builtins of the
@@ -17,6 +22,6 @@ done
 for dll in msvcr110 msvcp110 atl110 vcomp110 vccorlib110; do
   wine reg add 'HKCU\Software\Wine\DllOverrides' /v "$dll" /t REG_SZ /d native,builtin /f > /dev/null 2>&1
 done
-cat "$WINEPREFIX/winetricks.log" 2>/dev/null
+if [[ -f "$WINEPREFIX/winetricks.log" ]]; then cat "$WINEPREFIX/winetricks.log"; fi
 wine cmd /c ver
 df -h / "$VOL"

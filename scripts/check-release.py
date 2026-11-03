@@ -50,4 +50,5 @@ for relative in paths:
         if not (root/relative.parent/target).exists():
             raise SystemExit(f'Broken local link in {relative}: {target}')
 subprocess.run([sys.executable,str(root/'scripts/check-launcher-config.py')],check=True)
+subprocess.run([sys.executable,str(root/'scripts/check-setup.py')],check=True)
 print(f'Passed: {len(paths)} tracked files, syntax, local links and publication-content checks.')

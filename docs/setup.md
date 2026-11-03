@@ -34,6 +34,11 @@ mounted at `/Volumes/SWWine`.
 
 ## Install
 
+For a first installation, `./setup.sh` runs the Wine preparation commands below
+in order and creates `config.local.zsh` if needed. It stops on a failed step and
+refuses a running Wine bundle or a prefix with the Launcher already installed.
+Use `./setup.sh --dry-run` to list its steps without changing anything.
+
 Run from the checkout root, in order. Save and close all applications using the
 selected Wine bundle before replacing its DLLs or stopping its server.
 

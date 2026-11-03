@@ -27,20 +27,12 @@ Run these steps in Terminal, in order. Keep the project folder in a permanent lo
 ```sh
 git clone https://github.com/lazy-jubei/solidworks-maker-mac.git
 cd solidworks-maker-mac
-cp config.example.zsh config.local.zsh
 ```
 
 ### 2. Prepare Wine
 
 ```sh
-scripts/01-storage.sh
-scripts/02-wine.sh
-scripts/03-prefix.sh
-( source scripts/env.sh; wineserver -k; wineserver -w )
-scripts/build-shell32.sh
-scripts/install-ntdll-shim.sh
-scripts/build-mac-gdi.sh
-scripts/build-button-capture.sh
+./setup.sh
 ```
 
 ### 3. Install SOLIDWORKS
