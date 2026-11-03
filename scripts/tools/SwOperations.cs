@@ -2,6 +2,7 @@
 // Usage, with SOLIDWORKS already open: SwOperations.exe <output .SLDPRT path> [part template]
 // Checks analytical volumes after each operation. Uses late binding because GetTypeInfo fails under Wine.
 using System;
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
 
@@ -27,6 +28,10 @@ class SwOperations
     }
     static int Run(string[] args)
     {
+        if(args.Length<1 || args.Length>2){Console.WriteLine("Usage: SwOperations.exe <new output .SLDPRT> [part template]");return 2;}
+        if(!args[0].EndsWith(".SLDPRT",StringComparison.OrdinalIgnoreCase) || File.Exists(args[0])){
+            Console.WriteLine("Choose a new output .SLDPRT path; existing files will not be overwritten");return 2;
+        }
         object sw = null;
         DateTime deadline = DateTime.UtcNow.AddMinutes(5);
         while (sw == null)

@@ -23,10 +23,10 @@ this published setup kit on another Mac.
 
 ## Remaining limitations
 
-- A main-prefix dimension edit changed the parameter but incremental `EditRebuild3`
-  retained the old body. `ForceRebuild3(False)` produced the expected geometry.
-  Use a full rebuild (Ctrl+Q; the setup maps Cmd to Ctrl) if an edit appears stale.
-  The regression explicitly performs that full rebuild and checks the resulting volume.
+- An earlier main-prefix legacy-setter dimension edit changed the parameter but
+  incremental `EditRebuild3` retained the old body; a full rebuild produced the
+  expected geometry. Later STA/SetSystemValue3 regressions pass with incremental
+  rebuild only, but the intermittent earlier failure is not conclusively explained.
 - Share-backed disk-image I/O can pause the application and helper commands.
 - The native PropertyManager OK/Cancel capture failure has a scoped workaround; see
   [capture investigation](button-capture.md). Other UI commands and long-session stability need further testing.
@@ -71,3 +71,25 @@ The rebuild diagnostic also refused to run inside an active extrusion editor. Th
 sketch remained active afterwards, and a native Cancel restored the saved cut model
 with matching volume. This prevents the previously observed diagnostic mistake of
 forcing a rebuild while an extrusion preview is still pending.
+
+## Edge features and STEP round trip
+
+In the main installation, a copy of the saved 50 × 30 × 25 mm through-cut part
+passed a 2 mm constant-radius edge fillet and a 2 mm, 45° edge chamfer, followed
+by chamfer suppression/restore, incremental rebuild, native save and reopen.
+Each stage matched its analytical volume within 1e-12 m³. The final native volume
+was 0.000035393584224185866 m³. The fillet uses CreateDefinition/CreateFeature.
+
+The same part passed STEP export/import, one-solid verification, native save and
+reopen. Export/import/native save reported zero errors; saves reported zero
+warnings. The final reopened volume was 0.000035393584224185873 m³, within the
+same tolerance. These are specific regression models, not general file-format
+or long-session compatibility guarantees.
+
+The first imported-part Save As waited for a macOS Desktop-folder permission
+prompt. After the user allowed it, the same running operation completed and the
+part reopened with matching volume; no CAD/server restart was needed. A second
+native save of the more complex import completed in about 1.7 seconds. Do not
+treat time spent waiting for an unanswered OS prompt as CAD save performance.
+
+See [reproducing the CAD checks](cad-checks.md).

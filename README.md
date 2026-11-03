@@ -120,6 +120,9 @@ prefix, then run `scripts/build-button-capture.sh` and regenerate the shortcut w
 `09-mac-launcher.sh`. The guard defaults on only for a matching installed DLL pair;
 `SW_BUTTON_CAPTURE_GUARD=0` in local configuration disables it.
 
+For optional part, edge-feature and STEP regressions after installation, see
+[CAD checks](docs/cad-checks.md). These use separate local test files.
+
 The optional `09-mac-launcher.sh --test` shortcut uses a separate image and prefix.
 Main storage selectors in local configuration cannot override its fresh selectors.
 Use `SW_TEST_IMAGE`, `SW_TEST_VOL` and `SW_TEST_PREFIX` for custom test locations;
