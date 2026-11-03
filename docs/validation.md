@@ -141,8 +141,8 @@ confirmation; the editor closed and the feature tree showed four solid bodies.
 Native Windows Ctrl+Z restored count 3, and Ctrl+Y restored count 4. Read-only checks
 verified the feature parameter, individual volumes and centres after each operation.
 After native zoom-to-fit, save/reopen retained four bodies at X=0/60/120/180 mm,
-combined volume 0.00011309733552923255 m³, with no unsaved changes. This does not
-establish macOS Command-key mappings or manual viewport FPS.
+combined volume 0.00011309733552923255 m³, with no unsaved changes. Manual viewport
+FPS was not measured. Command-key checks are recorded separately below.
 
 ## Clean quit and shortcut relaunch
 
@@ -272,3 +272,18 @@ errors and warnings; reopening retained the feature, dimensions and clean flag,
 with volume 0.000035493644171874541 m³. The database and confirmation paths worked
 without another Wine patch or a CAD crash. This verifies that specific hole type
 and standard, not all Hole Wizard options or Toolbox component insertion.
+
+## Mac Command shortcuts
+
+With the existing LeftCommandIsCtrl setting enabled, native left Command+Z and
+Command+Y undid and redid a pattern-count edit on a separate saved part copy.
+Native PropertyManager input changed four bodies to five; Command+Z restored
+four with the original volume, and Command+Y restored five. Read-only inspection
+checked the feature count, individual body volumes and 60 mm spacing after each
+action. Native Command+S then saved the local part and cleared its modified flag.
+Reopening retained five bodies and volume 0.00014137166941154071 m³.
+
+The fitted viewport showed all five bodies. Native Command/Control/Shift state
+and Wine's navigation-key state were released after the checks. No new runtime
+patch was needed, and no CAD crash occurred. This check used left Command with the Windows
+undo/redo bindings; it does not establish other shortcut mappings.
