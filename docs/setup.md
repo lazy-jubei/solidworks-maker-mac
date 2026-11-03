@@ -39,6 +39,11 @@ in order and creates `config.local.zsh` if needed. It stops on a failed step and
 refuses a running Wine bundle or a prefix with the Launcher already installed.
 Use `./setup.sh --dry-run` to list its steps without changing anything.
 
+Storage preparation verifies that the configured mount belongs to the configured
+disk image. It refuses an ordinary folder, a different mounted image, or an image
+already attached elsewhere. New attachments use the requested mount point and are
+verified before Wine directories are created; existing images are not detached.
+
 Run from the checkout root, in order. Save and close all applications using the
 selected Wine bundle before replacing its DLLs or stopping its server.
 

@@ -287,3 +287,20 @@ The fitted viewport showed all five bodies. Native Command/Control/Shift state
 and Wine's navigation-key state were released after the checks. No new runtime
 patch was needed, and no CAD crash occurred. This check used left Command with the Windows
 undo/redo bindings; it does not establish other shortcut mappings.
+
+## Setup storage guards
+
+The original storage script accepted any existing mount directory, even if it
+belonged to another image, and did not verify the result of an attachment. It now
+checks hdiutil's backing-image/mount-point pair, requests the configured mount
+point explicitly, and checks it again before creating Wine directories.
+
+Simulated storage checks passed for a correct existing mount, a fresh image,
+paths with spaces and image aliases. They refused an ordinary folder, another
+image at the requested mount, an image attached elsewhere, invalid inventory and
+an incorrect post-attach result. Existing sentinel files were preserved. In the
+live development environment, the public checkout's default image differed from
+the already-mounted development image: storage preparation correctly refused
+before creating an image or cache, while the actual development image was
+recognized as mounted. No live mount or CAD process was changed. The simulated
+checks do not establish a complete fresh installation from the published kit.
