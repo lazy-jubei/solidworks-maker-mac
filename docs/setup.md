@@ -46,6 +46,7 @@ scripts/03-prefix.sh
 scripts/build-shell32.sh
 scripts/install-ntdll-shim.sh
 scripts/build-mac-gdi.sh
+scripts/build-button-capture.sh
 ```
 
 Obtain `3DEXPERIENCELauncher.msi` from your own official dashboard and save it as

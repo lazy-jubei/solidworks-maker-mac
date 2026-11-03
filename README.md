@@ -9,7 +9,7 @@ modeling, assemblies, drawings and PDF export. Local CAD is the main focus.
 
 ![SOLIDWORKS drawing on macOS](docs/codex-main-drawing.png)
 
-## Getting started
+## Requirements
 
 You’ll need:
 
@@ -18,25 +18,70 @@ You’ll need:
 - Xcode Command Line Tools, Python 3, and Homebrew `bison` and `cabextract`.
 - Tens of GB of free storage; local storage is recommended.
 
-Download the [latest release](https://github.com/lazy-jubei/solidworks-maker-mac/releases/latest)
-or clone this repository, then follow the **[setup guide](docs/setup.md)**.
-It covers configuration, downloading the installer through your dashboard,
-installation and sign-in.
+## Install
 
-Once installed, launch **SolidWorks (Wine)** from `~/Applications`.
-On first File → New, choose your units and drawing standard to create the templates.
-If macOS asks Wine for folder or volume access, respond to the permission prompt.
+Run these steps in Terminal, in order. Keep the project folder in a permanent location.
 
-The release contains scripts and compatibility patches. You supply the licensed
-SOLIDWORKS software; no installers, accounts or preconfigured Wine environment
-are bundled.
+### 1. Get the project
 
-## Current limitations
+```sh
+git clone https://github.com/lazy-jubei/solidworks-maker-mac.git
+cd solidworks-maker-mac
+cp config.example.zsh config.local.zsh
+```
 
-- Setup still includes manual steps; a complete first-time install from the
-  published kit has not yet been verified.
-- Graphics performance and stability can vary. Network-backed storage may pause.
-- Cloud/PLM features and full Intel Mac compatibility are unverified.
+### 2. Prepare Wine
+
+```sh
+scripts/01-storage.sh
+scripts/02-wine.sh
+scripts/03-prefix.sh
+( source scripts/env.sh; wineserver -k; wineserver -w )
+scripts/build-shell32.sh
+scripts/install-ntdll-shim.sh
+scripts/build-mac-gdi.sh
+scripts/build-button-capture.sh
+```
+
+### 3. Install SOLIDWORKS
+
+Open your Makers dashboard with the browser helper, replacing the example URL:
+
+```sh
+scripts/open-dashboard.sh 'https://YOUR-MAKERS-DASHBOARD-URL'
+```
+
+Sign in and download the 3DEXPERIENCE Launcher. Save its installer as
+`cache/installers/3DEXPERIENCELauncher.msi`, then run:
+
+```sh
+scripts/04-launcher.sh
+scripts/05-webview2.sh
+scripts/06-settings.sh
+( source scripts/env.sh; wineserver -k; wineserver -w )
+scripts/install-dxmt.sh
+scripts/build-signin-tools.sh
+```
+
+Return to the dashboard and use its Install button to install SOLIDWORKS.
+
+### 4. Sign in and launch
+
+Edit `config.local.zsh` and set `SW_TENANT` and `SW_REGISTRY` from your installed
+`SOLIDWORKS Design` desktop shortcut. Then run:
+
+```sh
+scripts/09-mac-launcher.sh
+scripts/10-fresh-signin.sh
+```
+
+Sign in using your SOLIDWORKS account. Afterward, open **SolidWorks (Wine)** in
+`~/Applications` to launch it.
+
+On first File → New, choose your units and drawing standard. Respond to any macOS
+folder-access prompts so Wine can open and save files.
+
+For help with a step, see the [full setup guide](docs/setup.md).
 
 ## More information
 
