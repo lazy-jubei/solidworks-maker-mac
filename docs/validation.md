@@ -239,3 +239,21 @@ within the diagnostic's 0.5% tessellation tolerance. No resolution preference wa
 changed. This verifies the exported fixture, not general printability or a physical
 print. Negative controls made from the actual export correctly rejected an open
 mesh, a 1000× scale error and inconsistent triangle winding.
+
+## Native viewport navigation
+
+Native middle-button rotation, Ctrl+middle pan, Shift+middle zoom and F zoom-to-fit
+passed on the saved cut-box part. Read-only view snapshots confirmed rotation
+changed orientation, pan changed translation without rotation or scaling, and zoom
+changed scale without rotation. Solid volume stayed 0.000035536504591506382 m³
+and the document remained clean. The final fitted model and FeatureManager were
+visually complete, with no new CAD crash.
+
+The private input helper needed actual modifier-key events for pan/zoom. Its first
+release implementation left native Shift state behind, which a later plain key
+inherited. It now sends native modifier-change releases through the same event
+path as the drag and explicitly clears flags on plain keys. Repeated pan/zoom and
+the subsequent F action passed; both macOS modifier state and Wine's Shift,
+Control and middle-button state were released. This was a test-helper correction;
+no Wine runtime patch was needed. These are functional input checks, not a frame-rate
+or physical smoothness benchmark.
