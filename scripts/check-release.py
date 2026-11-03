@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 root = Path(__file__).resolve().parent.parent
 paths = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root).decode().split('\0')
@@ -48,4 +49,5 @@ for relative in paths:
         target=link.split('#',1)[0]
         if not (root/relative.parent/target).exists():
             raise SystemExit(f'Broken local link in {relative}: {target}')
+subprocess.run([sys.executable,str(root/'scripts/check-launcher-config.py')],check=True)
 print(f'Passed: {len(paths)} tracked files, syntax, local links and publication-content checks.')

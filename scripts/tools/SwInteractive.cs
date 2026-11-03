@@ -9,7 +9,7 @@ class SwInteractive {
     static int Run(string[] a){
         if(a[0]=="commands"){
             Type t=Assembly.LoadFrom(a[1]).GetType("SolidWorks.Interop.swcommands.swCommands_e");
-            foreach(string name in Enum.GetNames(t))if(System.Text.RegularExpressions.Regex.IsMatch(name,@"^swCommands_(Sketch$|Rectangle$|Circle$|Extrude.*|InsertSketch.*|SmartDimension.*)"))Console.WriteLine(name+"="+Convert.ToInt32(Enum.Parse(t,name)));
+            foreach(string name in Enum.GetNames(t))if(System.Text.RegularExpressions.Regex.IsMatch(name,@"^swCommands_(Sketch$|Rectangle$|Circle$|Extrude.*|InsertSketch.*|SmartDimension.*|EditFeature.*|EditDefinition.*|Rebuild.*)"))Console.WriteLine(name+"="+Convert.ToInt32(Enum.Parse(t,name)));
             return 0;
         }
         object sw=Marshal.GetActiveObject("SldWorks.Application");
@@ -39,6 +39,11 @@ class SwInteractive {
             bool saved=Convert.ToBoolean(Call(doc,"SaveAs",a[1]));
             Console.WriteLine("Saved: "+saved);
             if(!saved || !System.IO.File.Exists(a[1]))throw new Exception("Save failed");return 0;
+        }
+        if(a[0]=="select-extrusion"){
+            object feature=Call(doc,"FeatureByName","Boss-Extrude1");
+            if(feature==null)throw new Exception("Extrusion missing");
+            Console.WriteLine("Extrusion selected: "+Call(feature,"Select2",false,0));return 0;
         }
         if(a[0]=="select-sketch"){
             Console.WriteLine("Sketch selected: "+Call(Get(doc,"Extension"),"SelectByID2","Sketch1","SKETCH",0.0,0.0,0.0,false,0,new DispatchWrapper(null),0));return 0;

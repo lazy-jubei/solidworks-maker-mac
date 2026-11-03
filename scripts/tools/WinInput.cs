@@ -26,6 +26,7 @@ class WinInput
     [DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr h,ref POINT p);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h,StringBuilder b,int n);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
+
     [DllImport("user32.dll")] static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr h);
@@ -86,6 +87,15 @@ class WinInput
         }
         if(a[1]=="info"){RECT pos;GetWindowRect(target,out pos);Console.WriteLine("window "+pos.l+" "+pos.t+" "+(pos.r-pos.l)+" "+(pos.b-pos.t));return 0;}
         if(a[1]=="press"){SendMessageW(target,0xF5,IntPtr.Zero,IntPtr.Zero);return 0;}
+        if(a[1]=="button-state"){
+            Console.WriteLine("BM_GETSTATE="+SendMessageW(target,0xF2,IntPtr.Zero,IntPtr.Zero));
+            return 0;
+        }
+        if(a[1]=="notify-click"){
+            var cls=new StringBuilder(256);GetClassNameW(target,cls,256);
+            if(cls.ToString()!="Button")throw new Exception("Expected an explicitly targeted standard Button");
+            SendMessageW(GetParent(target),0x111,(IntPtr)GetDlgCtrlID(target),target);return 0;
+        }
         if(a[1]=="combo-list"){
             int count=SendMessageW(target,0x146,IntPtr.Zero,IntPtr.Zero).ToInt32();
             Console.WriteLine("Selected: "+SendMessageW(target,0x147,IntPtr.Zero,IntPtr.Zero));

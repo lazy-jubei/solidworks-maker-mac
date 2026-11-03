@@ -47,6 +47,8 @@ else
   grep -q 'if (!lpLayout) return FALSE' "$SRC/dlls/comctl32/header.c" || python3 -I "$PATCHES/comctl32-header-layout.py" "$SRC"
 fi
 
+python3 -I "$PATCHES/comctl32-button-capture.py" "$SRC"
+
 export PATH="$LLVM/bin:/opt/homebrew/opt/bison/bin:/usr/bin:/bin:/opt/homebrew/bin"
 export TMPDIR="$VOL/tmp"
 mkdir -p "$OBJ"
@@ -93,4 +95,5 @@ for mod in kernelbase comctl32 comctl32_v6; do
   cp "$OBJ/dlls/$mod/x86_64-windows/$mod.dll" "$LIB"
   cp "$LIB" "$WINEPREFIX/drive_c/windows/system32/$mod.dll"
 done
+python3 -I "$PATCHES/mark-button-capture.py" "$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/comctl32_v6.dll" "$WINEPREFIX/drive_c/windows/system32/comctl32_v6.dll"
 echo BUILD-OK

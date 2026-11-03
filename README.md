@@ -109,6 +109,17 @@ if you move the checkout or change its runtime scripts. CLI logs are under `logs
 Finder shortcut logs are under `~/Library/Logs/SolidWorksWine/`. Logs can contain
 private vendor session information: do not publish them without review.
 
+For an existing installation built with this kit, save and exit CAD, stop its selected
+prefix, then run `scripts/build-button-capture.sh` and regenerate the shortcut with
+`09-mac-launcher.sh`. The guard defaults on only for a matching installed DLL pair;
+`SW_BUTTON_CAPTURE_GUARD=0` in local configuration disables it.
+
+The optional `09-mac-launcher.sh --test` shortcut uses a separate image and prefix.
+Main storage selectors in local configuration cannot override its fresh selectors.
+Use `SW_TEST_IMAGE`, `SW_TEST_VOL` and `SW_TEST_PREFIX` for custom test locations;
+the generated shortcut refuses the main prefix or image. The two Launcher services
+still must not run simultaneously.
+
 On first File > New, select units/standard/orientation to generate default templates.
 The validated setup uses MMGS, ISO and Y-up.
 
@@ -127,6 +138,8 @@ The validated setup uses MMGS, ISO and Y-up.
   driver matches its build marker. Synchronous readback can affect performance.
 - A bounded helper cancels the spurious HTTP Basic prompt for the tested Makers
   IAM host and detaches the official login browser window. It does not read credentials.
+- A scoped v6 button capture guard fixes native PropertyManager OK/Cancel clicks;
+  see [capture investigation](docs/button-capture.md).
 - The optional PLM Services add-in is disabled. Local CAD is the validated focus.
 
 Do not run two Launcher prefixes simultaneously: both use TCP port 20250. Do not
@@ -143,7 +156,7 @@ extrusion, depth edit, cut, suppression and save/reopen volumes. `SwDocumentOps`
 checks an assembly, drawing and PDF export. See their source headers for arguments.
 
 `python3 scripts/check-release.py` checks syntax, tracked paths and publication
-content. `scripts/make-release.sh v0.1.0` packages the committed source with SHA256SUMS.
+content. `scripts/make-release.sh v0.1.1` packages the committed source with SHA256SUMS.
 This release contains no compiled Wine modules. Rebuilding uses pinned Wine 11.16
 source and patchers; preserve originals and use a separate prefix for experiments.
 

@@ -6,7 +6,9 @@ class SwRebuildProbe {
  static object Call(object o,string n,params object[] a){return o.GetType().InvokeMember(n,BindingFlags.InvokeMethod,null,o,a);}
  static object Get(object o,string n){return o.GetType().InvokeMember(n,BindingFlags.GetProperty,null,o,null);}
  [STAThread] static int Main(){try{
-  object sw=Marshal.GetActiveObject("SldWorks.Application"), doc=Get(sw,"ActiveDoc"), dimension=Call(doc,"Parameter","D1@Boss-Extrude1");
+  object sw=Marshal.GetActiveObject("SldWorks.Application"), doc=Get(sw,"ActiveDoc");
+  if(Call(doc,"GetActiveSketch2")!=null)throw new Exception("Exit the active sketch or extrusion editor before running a rebuild probe");
+  object dimension=Call(doc,"Parameter","D1@Boss-Extrude1");
   Console.WriteLine("Depth before="+Get(dimension,"SystemValue"));
   Console.WriteLine("NeedsRebuild="+Get(Get(doc,"Extension"),"NeedsRebuild2"));
   Console.WriteLine("EditRebuild3="+Call(doc,"EditRebuild3"));

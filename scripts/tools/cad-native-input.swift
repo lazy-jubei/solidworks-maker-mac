@@ -18,15 +18,23 @@ _ = app.activate(options: [.activateAllWindows])
 // supports the standard frontmost attribute. Keep the foreground/occlusion checks.
 _ = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
 RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+if args[2] == "activate" {
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { fail("CAD did not become the foreground app") }
+    print("Activated observed CAD PID", pid)
+    exit(0)
+}
 guard let source = CGEventSource(stateID: .hidSystemState) else { fail("No native event source") }
 Thread.sleep(forTimeInterval: 0.3)
-if args[2] == "click" {
+if ["click", "release-left"].contains(args[2]) {
     guard args.count == 5, let x = Double(args[3]), let y = Double(args[4]) else { fail("Expected x and y") }
     let point = CGPoint(x:x,y:y)
     guard rect.contains(point) else { fail("Point is outside the observed CAD window") }
-    for type in [CGEventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+    let eventTypes: [CGEventType] = args[2] == "release-left" ? [.leftMouseUp] : [.mouseMoved, .leftMouseDown, .leftMouseUp]
+    for type in eventTypes {
         guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: .left) else { fail("Cannot create mouse event") }
+        event.flags = []
         event.setIntegerValueField(.mouseEventClickState,value:1)
+        event.setDoubleValueField(.mouseEventPressure,value:type == .leftMouseDown ? 1 : 0)
         guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { fail("CAD is not the foreground app; mouse event cancelled") }
         let underPoint = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String:Any]] ?? []).first { candidate in
             guard (candidate[kCGWindowLayer as String] as? Int) == 0,

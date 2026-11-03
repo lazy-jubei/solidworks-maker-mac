@@ -31,6 +31,16 @@ if [[ -f "$GL_DRIVER.gdi.sha256" ]]; then
   actual="$(shasum -a 256 "$GL_DRIVER" | cut -d ' ' -f 1)"
   if [[ "$actual" == "$expected" ]]; then export SW_OPENGL_GDI="${SW_OPENGL_GDI:-1}"; fi
 fi
+# Only enable the scoped button guard for the exact matching library/prefix pair.
+BUTTON_DLL="$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/comctl32_v6.dll"
+if [[ -f "$BUTTON_DLL.capture.sha256" && -f "$WINEPREFIX/drive_c/windows/system32/comctl32_v6.dll" ]]; then
+  expected="$(<"$BUTTON_DLL.capture.sha256")"
+  actual="$(shasum -a 256 "$BUTTON_DLL" | cut -d ' ' -f 1)"
+  prefix_actual="$(shasum -a 256 "$WINEPREFIX/drive_c/windows/system32/comctl32_v6.dll" | cut -d ' ' -f 1)"
+  if [[ "$actual" == "$expected" && "$prefix_actual" == "$expected" ]]; then
+    export SW_BUTTON_CAPTURE_GUARD="${SW_BUTTON_CAPTURE_GUARD:-1}"
+  fi
+fi
 # Automatic cross-process viewport resizing is disabled: it caused sketch crashes.
 # Keep CAD's own geometry untouched. SwViewportFix is retained only for diagnosis.
 

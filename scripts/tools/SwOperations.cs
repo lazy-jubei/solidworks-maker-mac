@@ -17,7 +17,7 @@ class SwOperations
         return target.GetType().InvokeMember(name, BindingFlags.GetProperty, null, target, null);
     }
 
-    static int Main(string[] args) {
+    [STAThread] static int Main(string[] args) {
         try { return Run(args); }
         catch (Exception e) {
             while (e.InnerException != null) e = e.InnerException;
@@ -44,6 +44,8 @@ class SwOperations
         Console.WriteLine("template: " + template);
         object doc = Call(sw, "NewDocument", template, 0, 0.0, 0.0);
         if (doc == null) { Console.WriteLine("NewDocument failed"); return 1; }
+        if ((string)Call(doc,"GetTitle") != (string)Call(Get(sw,"ActiveDoc"),"GetTitle"))
+            throw new Exception("New part is not the active document required by EditRebuild3");
         object ext = Get(doc, "Extension");
         Console.WriteLine("plane selected: " + Call(ext, "SelectByID2", "Front Plane", "PLANE", 0.0, 0.0, 0.0, false, 0,
             new DispatchWrapper(null), 0));
@@ -65,12 +67,12 @@ class SwOperations
         Console.WriteLine("volume m3: " + volume);
         object depth = Call(doc, "Parameter", "D1@" + Get(feature, "Name"));
         if (depth == null) throw new Exception("Extrusion depth parameter missing");
-        depth.GetType().InvokeMember("SystemValue", BindingFlags.SetProperty, null, depth, new object[]{0.025});
+        // Use the current dimension API and require an ordinary incremental rebuild.
+        int setStatus=Convert.ToInt32(Call(depth,"SetSystemValue3",0.025,1,null));
+        Console.WriteLine("SetSystemValue3 status: "+setStatus);
+        if(setStatus!=0)throw new Exception("Extrusion dimension edit failed");
         Console.WriteLine("Edited depth m: " + Get(depth, "SystemValue"));
-        Console.WriteLine("EditRebuild3: " + Call(doc, "EditRebuild3"));
-        // Main can retain the old body after a successful incremental rebuild.
-        // Explicitly rebuild every feature before checking the edited geometry.
-        Console.WriteLine("ForceRebuild3: " + Call(doc, "ForceRebuild3", false));
+        if(!Convert.ToBoolean(Call(doc,"EditRebuild3")))throw new Exception("Incremental rebuild failed");
         CheckVolume(ext, 0.05 * 0.03 * 0.025, "edited extrusion");
         Call(doc, "ClearSelection2", true);
         if (!Convert.ToBoolean(Call(ext, "SelectByID2", "Front Plane", "PLANE", 0.0, 0.0, 0.0, false, 0, new DispatchWrapper(null), 0)))
