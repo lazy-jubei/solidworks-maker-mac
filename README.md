@@ -103,8 +103,14 @@ scripts/10-fresh-signin.sh
 ```
 
 Sign in using the official vendor form. Future launches can use
-`~/Applications/SolidWorks (Wine).app`. macOS may request network/removable-volume
-access for Wine. Complete those permission dialogs yourself. Regenerate the shortcut
+`~/Applications/SolidWorks (Wine).app`. macOS may request Desktop-folder or
+network/removable-volume access for Wine. Complete those permission dialogs yourself.
+A first Save As can wait for Desktop-folder access even when its destination is
+inside the Wine prefix. If CAD appears frozen during a save, check for a macOS
+permission prompt before force-quitting; in testing, the Wine server waited inside
+the native file-open call while macOS requested Desktop access. Allow access if
+you want Wine to use that location. Permission prompts need your own interaction.
+Regenerate the shortcut
 if you move the checkout or change its runtime scripts. CLI logs are under `logs/`;
 Finder shortcut logs are under `~/Library/Logs/SolidWorksWine/`. Logs can contain
 private vendor session information: do not publish them without review.
