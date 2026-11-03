@@ -93,3 +93,27 @@ native save of the more complex import completed in about 1.7 seconds. Do not
 treat time spent waiting for an unanswered OS prompt as CAD save performance.
 
 See [reproducing the CAD checks](cad-checks.md).
+
+## Assembly editing and drawing export
+
+In the same main CAD session after about three hours of uptime, the filleted and
+chamfered part passed two-instance assembly creation/save/reopen and drawing
+creation with front/isometric views, drawing save/reopen and PDF export. The
+combined volume was 0.000070787168448371745 m³. Rendering the one-page landscape
+Letter PDF showed both complete, unclipped views and the Makers footer. These
+document-creation calls ran without a debugger; no CEF crash occurred in this run.
+
+A separate assembly copy then passed a 20 mm component move, fixed/floating state
+checks, a 40 mm distance mate, component suppression/restore, incremental rebuild,
+native save/reopen, transform checks and mate persistence. Suppression halved the
+volume as expected; restore and reopen recovered the original combined volume.
+The initial test client incorrectly expected mate status zero; it was corrected
+to the documented success enum (1), and the complete sequence passed on a new
+copy. That initial refusal was not a CAD failure.
+
+The distance mate was then edited from 40 to 60 mm using native mouse/keyboard
+input, including the ordinary PropertyManager green confirmation. Exiting the
+subsequent empty Mate tool retained the committed value. After saving and reopening,
+the mate dimension was 0.06 m and the two component Z translations differed by
+0.06 m. The saved assembly was clean. This tests another native confirmation path
+with the existing capture guard; no new Wine module change was required.

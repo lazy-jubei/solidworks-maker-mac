@@ -39,7 +39,40 @@ All three checks use a volume tolerance of 1e-12 m³ and refuse existing output
 files. Build the current helpers before using them; older base-helper versions
 could overwrite an existing output.
 
-The helpers use STA and late-bound COM. API timings exclude console-log writes;
+The part, edge and STEP helpers use STA and late-bound COM. Timed API calls exclude console-log writes;
 redirect logs to a local temporary file when investigating performance. macOS
 may request Desktop or volume access during file operations. Complete those
 prompts yourself before interpreting an apparent save freeze.
+
+## Assembly and drawing checks
+
+With the saved edge-test part, create a new assembly and drawing/PDF pair:
+
+```zsh
+wine "$VOL/tools/SwDocumentOps.exe" \
+  'C:\users\Public\Documents\cad-check-edges.SLDPRT' \
+  'C:\users\Public\Documents\cad-check-documents'
+wine "$VOL/tools/SwAssemblyOps.exe" \
+  'C:\users\Public\Documents\cad-check-documents.SLDASM' \
+  'C:\users\Public\Documents\cad-check-assembly-edit.SLDASM'
+```
+
+The document check inserts two instances, checks their combined volume, saves
+and reopens the assembly, creates front/isometric drawing views, checks their
+bounds and count, exports PDF, and reopens the drawing. It refuses a stem when
+any assembly, drawing or PDF output already exists. Render the PDF to inspect
+its actual layout; a successful export or file header check is insufficient.
+
+The assembly-edit check requires a saved assembly with two instances of the same
+part and standard English Front Plane names. It refuses dirty open documents,
+saves a new assembly copy, fixes the lower-X component, floats the other, moves
+it 20 mm in X, then adds a 40 mm distance mate between their front planes. It
+checks component transforms, combined volume, suppression/restore, native save
+and reopen, and mate persistence. One distance mate leaves other degrees of
+freedom; this is not a fully constrained assembly test. `AddMate5` status is
+checked against `swAddMateError_NoError`, whose value is 1.
+
+`build-cad-checks.sh` compiles the edge, STEP and assembly-edit helpers. The
+document helper comes from `build-signin-tools.sh` and retains its original
+threading behavior; the newer three helpers use STA. Only their timed API calls
+exclude log-writing time.

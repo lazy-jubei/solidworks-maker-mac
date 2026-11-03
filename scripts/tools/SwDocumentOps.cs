@@ -30,6 +30,9 @@ class SwDocumentOps {
     static int Main(string[] a){try{return Run(a);}catch(Exception e){while(e.InnerException!=null)e=e.InnerException;Log("Failed at "+stage+": "+e.GetType().Name+" "+e.Message);return 1;}}
     static int Run(string[] a){
         Require(a.Length==2,"Expected part and output stem");
+        Require(File.Exists(a[0]),"Saved source part missing");
+        foreach(string extension in new[]{".SLDASM",".SLDDRW",".pdf"})
+            Require(!File.Exists(a[1]+extension),"Output exists; choose a new stem: "+a[1]+extension);
         object sw=Marshal.GetActiveObject("SldWorks.Application");
         stage="load source part";object part=Call(sw,"OpenDoc",a[0],1);Require(part!=null,"Source part open failed");double partVolume=Volume(part);Require(partVolume>0,"Source part has no volume");
         stage="new assembly";object assembly=New(sw,9);Log("Created assembly");
