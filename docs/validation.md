@@ -143,3 +143,20 @@ verified the feature parameter, individual volumes and centres after each operat
 After native zoom-to-fit, save/reopen retained four bodies at X=0/60/120/180 mm,
 combined volume 0.00011309733552923255 m³, with no unsaved changes. This does not
 establish macOS Command-key mappings or manual viewport FPS.
+
+## Clean quit and shortcut relaunch
+
+After all 11 open documents were confirmed clean, the normal CAD exit completed
+and its background monitor exited with it. The Mac app shortcut started a new CAD
+process and monitor, with StartupProcessCompleted and UserControl both true.
+The existing four-body part reopened with its expected volume. A native click in
+the standard New Document dialog then created a blank part, and the current
+revolve helper passed its complete three-body pattern, undo/redo, suppression,
+incremental rebuild and save/reopen sequence in this fresh session. This run also
+exercised the helper's active-document guards before undo, redo and rebuild.
+
+The Welcome window's News panel was blank; closing it allowed CAD work to proceed.
+A source read from the network share and the launcher both paused during startup,
+then recovered without restarting Wine. That is evidence of storage latency, not
+a diagnosis of every pause. The disk image remained mounted throughout this test;
+Finder auto-mount from an unmounted image remains untested.
