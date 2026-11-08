@@ -8,6 +8,7 @@ tmp/
 output/
 dist/
 build/
+/tools/
 prefix*/
 .claude/
 .DS_Store
