@@ -170,19 +170,19 @@ exit "${INSTALL_TEST_FAIL:-0}"
     env.pop('INSTALL_TEST_FAIL_STAGE')
     executable(scripts / 'open-dashboard.sh', 'print -r -- "browser:$1" >> "$INSTALL_TEST_CALLS"\n')
     executable(fakebin / 'osascript', '''script="$2"
-if [[ "$script" == *"default answer"* ]]; then print -r -- "$5"
-elif [[ "$script" == *"choose file"* ]]; then print -r -- "$INSTALL_TEST_MSI"
+if [[ "$script" == *"choose file"* ]]; then print -r -- "dialog:launcher:$5" >> "$INSTALL_TEST_CALLS"; print -r -- "$INSTALL_TEST_MSI"
+elif [[ "$script" == *"default answer"* ]]; then print -r -- "$5"
 elif [[ "$script" == *"display dialog"* ]]; then print -r -- "dialog:$5" >> "$INSTALL_TEST_CALLS"; print "button returned:$5"
 fi
 ''')
-    dialogs = dict(env, SW_INSTALLER_UI='dialogs', INSTALL_TEST_MSI=str(msi))
+    dialogs = dict(env, SW_INSTALLER_UI='dialogs', INSTALL_TEST_MSI=str(msi), HOME=str(base / 'home'))
     calls.unlink()
     wizard = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=dialogs,
                             input='', capture_output=True, text=True)
     assert wizard.returncode == 0, wizard.stderr
     steps = calls.read_text().splitlines()
     assert steps[0] == 'dialog:Start' and 'browser:https://www.solidworks.com/maker-cloud' in steps
-    assert 'dialog:Choose Launcher File…' in steps and steps[-2:] == ['dialog:Open SOLIDWORKS', '10-fresh-signin.sh']
+    assert f'dialog:launcher:{base}/home/Downloads/3DEXPERIENCELauncher.msi' in steps and steps[-2:] == ['dialog:Open SOLIDWORKS', '10-fresh-signin.sh']
     # Quit (AppleScript "User canceled") stops quietly with status 130 and records nothing new.
     shutil.rmtree(project / 'cache/install-state')
     (desktop / 'SOLIDWORKS Design.lnk').unlink()
