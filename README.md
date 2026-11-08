@@ -16,8 +16,14 @@ An installer window opens and walks you through the rest: it installs prerequisi
 prepares Wine, then guides you through installing SOLIDWORKS using your own Makers
 subscription and signing in. Its Terminal pane shows the details. The window is
 built on your Mac from `scripts/tools/InstallerApp.swift` with Apple's Command Line Tools,
-so there is no downloaded app to approve. Closing it stops setup and the sign-in browser;
-reopen it with `zsh ~/SolidWorksMakerMac/scripts/install-guided.sh` to continue where you left off.
+so there is no downloaded app to approve. Closing it stops setup, the sign-in browser and Wine.
+
+You sign in and download the 3DEXPERIENCE Launcher first; preparing Wine then runs
+unattended (30–60 minutes the first time), and you install SOLIDWORKS from your
+dashboard at the end. Each run installs into a new Wine prefix and deletes the previous
+one, after a warning if SOLIDWORKS is already installed in it. The Wine build, downloads
+and a clean prepared prefix are kept, so a reinstall prepares Wine in a few minutes.
+To run it again: `zsh ~/SolidWorksMakerMac/scripts/install-guided.sh`.
 
 After setup, open **SolidWorks (Wine)** in your Applications folder.
 

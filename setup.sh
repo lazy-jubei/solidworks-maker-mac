@@ -37,20 +37,72 @@ refuse_installed_prefix() {
   fi
 }
 refuse_installed_prefix
+trap 'rc=$?; if [[ -n "${build_pid:-}" ]]; then kill "$build_pid" 2>/dev/null || true; fi; exit $rc' EXIT
 "$setup_root/scripts/tools/check-setup-requirements.sh"
 if [[ "${SW_CONFIG_FILE:h:A}" == "$setup_root" && "${SW_CONFIG_FILE:t}" == config.local.zsh && ! -f "$SW_CONFIG_FILE" ]]; then
   cp "$setup_root/config.example.zsh" "$SW_CONFIG_FILE"
 fi
+# A clean prepared prefix is kept on the image after a full preparation, so later installs
+# copy it (a minute or two) instead of running winetricks again. It is only used while
+# the setup scripts, patches and pinned versions that made it are unchanged.
+template="${SW_PREFIX_TEMPLATE:-$VOL/prefix-template-$WINE_VERSION}"
+template_stamp() {
+  local files=("$setup_root/setup.sh")
+  local stage
+  for stage in "${stages[@]}"; do
+    if [[ "$stage" != stop-prefix ]]; then files+=("$setup_root/scripts/$stage"); fi
+  done
+  files+=("$setup_root"/scripts/patches/**/*(.N))
+  { print -r -- "$WINE_FLAVOR $WINE_VERSION $WINETRICKS_VERSION"; cat -- "${files[@]}"; } | shasum -a 256 | cut -d' ' -f1
+}
+# On a first install, compile the patched Wine parts while winetricks fills the prefix:
+# compiling only reads the source and build folders. Installing them waits for Wine to stop.
+build_pid=''
+wait_for_build() {
+  if [[ -n "$build_pid" ]]; then
+    if ! wait "$build_pid"; then
+      build_pid=''
+      print -u2 "Compiling Wine failed; see $ROOT/logs/wine-build.log"
+      tail -20 "$ROOT/logs/wine-build.log" >&2
+      exit 1
+    fi
+    build_pid=''
+  fi
+}
 for stage in "${stages[@]}"; do
   if [[ "$stage" == stop-prefix ]]; then
     print 'Stopping the newly initialized Wine prefix…'
     wineserver -k
     wineserver -w
-  else
-    print "Running $stage…"
-    "$setup_root/scripts/$stage"
-    # An existing image may have been unmounted during the first check.
-    if [[ "$stage" == 01-storage.sh ]]; then refuse_installed_prefix; fi
+    continue
   fi
+  if [[ "$stage" == 03-prefix.sh ]]; then
+    stamp="$(template_stamp)"
+    if [[ ! -e "$WINEPREFIX" && -f "$template/.sw-template-stamp" \
+          && "$(<"$template/.sw-template-stamp")" == "$stamp" ]]; then
+      print 'Copying the prepared Wine prefix (made by an earlier setup)…'
+      ditto "$template" "$WINEPREFIX"
+      rm -f "$WINEPREFIX/.sw-template-stamp"
+      print 'Wine preparation complete.'
+      exit 0
+    fi
+    if [[ ! -f "$VOL/build/obj-wine-$WINE_VERSION/dlls/shell32/x86_64-windows/shell32.dll" ]]; then
+      print "Compiling Wine's patched libraries alongside the prefix (log: logs/wine-build.log)…"
+      mkdir -p "$ROOT/logs"
+      SW_BUILD_ONLY=1 "$setup_root/scripts/build-shell32.sh" < /dev/null > "$ROOT/logs/wine-build.log" 2>&1 &
+      build_pid=$!
+    fi
+  fi
+  if [[ "$stage" == build-shell32.sh ]]; then wait_for_build; fi
+  print "Running $stage…"
+  "$setup_root/scripts/$stage"
+  # An existing image may have been unmounted during the first check.
+  if [[ "$stage" == 01-storage.sh ]]; then refuse_installed_prefix; fi
 done
+print 'Saving the prepared Wine prefix for later installs…'
+rm -rf -- "$template.partial"
+ditto "$WINEPREFIX" "$template.partial"
+print -r -- "$(template_stamp)" > "$template.partial/.sw-template-stamp"
+rm -rf -- "$template"
+mv -- "$template.partial" "$template"
 print 'Wine preparation complete.'
