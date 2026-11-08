@@ -32,10 +32,12 @@ def fixture(base):
     env['PATH'] = str(bin_dir) + os.pathsep + env['PATH']
     executable(bin_dir / 'ps', 'if [[ "${SW_SETUP_TEST_ACTIVE:-0}" == 1 ]]; then print -r -- "$SW_SETUP_TEST_SERVER"; fi\n')
     executable(bin_dir / 'wineserver', 'print -r -- "stop:$1" >> "$SW_SETUP_TEST_CALLS"\n')
+    executable(bin_dir / 'wine', 'print -r -- "wine:$1" >> "$SW_SETUP_TEST_CALLS"\n')
     (scripts / 'env.sh').write_text('\n'.join(f'{key}={shlex.quote(str(value))}' for key, value in {
         'ROOT': project, 'WINEPREFIX': prefix, 'WINE_APP': app,
         'SW_CONFIG_FILE': project / 'config.local.zsh', 'VOL': volume,
         'W_CACHE': base / 'cache', 'XDG_CACHE_HOME': base / 'xdg',
+        'WINE_VERSION': '11.16', 'WINE_FLAVOR': 'staging', 'WINETRICKS_VERSION': '20260125',
     }.items()) + '\nexport WINEPREFIX\n')
     tools = scripts / 'tools'
     tools.mkdir()
@@ -44,8 +46,12 @@ def fixture(base):
     names = ['01-storage.sh', '02-wine.sh', '03-prefix.sh', 'build-shell32.sh',
              'install-ntdll-shim.sh', 'build-mac-gdi.sh', 'build-button-capture.sh']
     for name in names:
-        executable(scripts / name, f'print {shlex.quote(name)} >> "$SW_SETUP_TEST_CALLS"\n'
+        # The compile-only build runs in the background, so its record says so.
+        executable(scripts / name, f'print -r -- {shlex.quote(name)}"${{SW_BUILD_ONLY:+ compile}}" >> "$SW_SETUP_TEST_CALLS"\n'
                    f'if [[ "${{SW_SETUP_TEST_FAIL_STAGE:-}}" == {shlex.quote(name)} ]]; then exit 37; fi\n')
+    # Preparing the prefix creates it.
+    with (scripts / '03-prefix.sh').open('a') as script:
+        script.write('mkdir -p "$WINEPREFIX/drive_c"\n')
     return project, prefix, calls, env, names
 
 
@@ -72,30 +78,76 @@ with TemporaryDirectory(prefix='sw-setup-check-') as directory:
     assert installed.returncode != 0 and 'already has the Launcher' in installed.stderr
     assert not calls.exists()
     launcher.unlink()
+    def recorded():
+        # The background compile may land anywhere before build-shell32 installs it.
+        lines = calls.read_text().splitlines()
+        if 'build-shell32.sh compile' in lines:
+            assert 'build-shell32.sh' not in lines or lines.index('build-shell32.sh compile') < lines.index('build-shell32.sh'), lines
+        return [line for line in lines if line != 'build-shell32.sh compile'], 'build-shell32.sh compile' in lines
     success = run()
     assert success.returncode == 0, success.stderr
     expected = ['prerequisites', *names[:3], 'stop:-k', 'stop:-w', *names[3:]]
-    assert calls.read_text().splitlines() == expected
+    assert recorded() == (expected, True)
+    # The prepared prefix is kept, with a stamp of the scripts that made it.
+    template = prefix.parent / 'prefix-template-11.16'
+    assert (template / '.sw-template-stamp').exists() and (template / 'drive_c').is_dir()
+    # A new install copies it instead of preparing a prefix again.
+    calls.unlink()
+    shutil.rmtree(prefix)
+    copied = run()
+    assert copied.returncode == 0 and 'Copying the prepared Wine prefix' in copied.stdout, copied.stderr
+    assert calls.read_text().splitlines() == ['prerequisites', *names[:2]]
+    assert (prefix / 'drive_c').is_dir() and not (prefix / '.sw-template-stamp').exists()
+    # A changed setup script makes the kept prefix stale: prepare from scratch again.
+    calls.unlink()
+    shutil.rmtree(prefix)
+    with (project / 'scripts/03-prefix.sh').open('a') as script:
+        script.write('# changed\n')
+    stale = run()
+    assert stale.returncode == 0 and 'Copying' not in stale.stdout
+    assert recorded()[0] == expected
     assert (project / 'config.local.zsh').read_bytes() == (project / 'config.example.zsh').read_bytes()
     calls.unlink()
     custom = 'export SW_TENANT=keep-this-setting\n'
     (project / 'config.local.zsh').write_text(custom)
     env['SW_SETUP_TEST_FAIL_STAGE'] = '03-prefix.sh'
     failed = run()
-    assert failed.returncode == 37
-    assert calls.read_text().splitlines() == ['prerequisites', *names[:3]]
+    assert failed.returncode == 37, (failed.returncode, failed.stdout, failed.stderr)
+    assert recorded()[0] == ['prerequisites', *names[:3]]
     assert (project / 'config.local.zsh').read_text() == custom
 
     # Run the actual dependency script against fake winetricks and wineserver.
     calls.unlink()
     shutil.copy2(root / 'scripts/03-prefix.sh', project / 'scripts/03-prefix.sh')
+    (project / 'logs').mkdir(exist_ok=True)
     executable(base / 'bin/winetricks', 'print -r -- "verb:$3" >> "$SW_SETUP_TEST_CALLS"\n'
-               'if [[ "$3" == vcrun2022 ]]; then exit 37; fi\n')
+               'if [[ "$3" == "${SW_SETUP_TEST_FAIL_VERB:-}" ]]; then exit 37; fi\n')
+    env['SW_SETUP_TEST_FAIL_VERB'] = 'none'
+    dependency = subprocess.run(['zsh', str(project / 'scripts/03-prefix.sh')],
+                                env=env, capture_output=True, text=True)
+    assert dependency.returncode == 0, dependency.stderr
+    lines = calls.read_text().splitlines()
+    # The prefix is created once, fonts run beside the installers, and win11 comes last.
+    assert lines[:2] == ['wine:wineboot', 'stop:-w'], lines
+    verbs = [line for line in lines if line.startswith('verb:')]
+    installers = [verb for verb in verbs if verb != 'verb:corefonts']
+    assert sorted(verbs) == sorted(['verb:corefonts', 'verb:vcrun2022', 'verb:dotnet48', 'verb:msxml6', 'verb:win11'])
+    assert installers == ['verb:vcrun2022', 'verb:dotnet48', 'verb:msxml6', 'verb:win11'] and verbs[-1] == 'verb:win11', lines
+    # A failing installer stops the run before the rest.
+    calls.unlink()
+    env['SW_SETUP_TEST_FAIL_VERB'] = 'vcrun2022'
     dependency = subprocess.run(['zsh', str(project / 'scripts/03-prefix.sh')],
                                 env=env, capture_output=True, text=True)
     assert dependency.returncode == 37, dependency.stderr
-    assert calls.read_text().splitlines() == ['verb:corefonts', 'stop:-w', 'verb:vcrun2022']
+    lines = calls.read_text().splitlines()
+    assert 'verb:vcrun2022' in lines and 'verb:dotnet48' not in lines and 'verb:win11' not in lines, lines
     assert 'Dependency vcrun2022 failed' in dependency.stderr
+    # A failing font install fails the run too, after the installers.
+    calls.unlink()
+    env['SW_SETUP_TEST_FAIL_VERB'] = 'corefonts'
+    dependency = subprocess.run(['zsh', str(project / 'scripts/03-prefix.sh')],
+                                env=env, capture_output=True, text=True)
+    assert dependency.returncode == 37 and 'verb:win11' not in calls.read_text(), dependency.stderr
 
 # Also refuse an existing Launcher first discovered after its image is attached.
 with TemporaryDirectory(prefix='sw-mounted-setup-check-') as directory:
@@ -110,4 +162,4 @@ with TemporaryDirectory(prefix='sw-mounted-setup-check-') as directory:
     assert mounted.returncode != 0 and 'already has the Launcher' in mounted.stderr
     assert calls.read_text().splitlines() == ['prerequisites', '01-storage.sh']
 
-print('Passed: dry-run, active/installed refusal, ordering, failure propagation, config preservation and dependency failure.')
+print('Passed: dry-run, active/installed refusal, ordering, parallel compile, kept prefix reuse/invalidation, failure propagation, config preservation and parallel dependencies.')

@@ -27,7 +27,10 @@ if [[ ! -d "$APP" ]]; then
   ( cd "$D" && ditto -xk "$ZIP" . )
   xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
 fi
-PROFILE="$(mktemp -d "$VOL/tmp/dashboard-profile.XXXXXX")"
+# On the disk image when it is mounted; on a first install the browser opens before it exists.
+profile_base="$VOL/tmp"
+[[ -d "$profile_base" ]] || profile_base=/private/tmp
+PROFILE="$(mktemp -d "$profile_base/dashboard-profile.XXXXXX")"
 browser=''
 # Stopping this script (the installer does when it no longer needs the browser) closes it.
 trap 'if [[ -n "$browser" ]]; then kill "$browser" 2>/dev/null; wait "$browser" 2>/dev/null; fi; rm -rf "$PROFILE"' EXIT

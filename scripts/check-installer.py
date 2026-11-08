@@ -121,7 +121,9 @@ exit "${INSTALL_TEST_FAIL:-0}"
     envfile = {
         'ROOT': project, 'CACHE': project / 'cache', 'WINEPREFIX': prefix,
         'WINE_APP': base / 'fake wine app', 'SW_CONFIG_FILE': project / 'config.local.zsh',
+        'IMAGE': base / 'image.sparsebundle',
     }
+    (base / 'image.sparsebundle').mkdir()
     (scripts / 'env.sh').write_text(''.join(f'{key}={shlex.quote(str(value))}\n'
                                          for key, value in envfile.items()))
     guided = (root / 'scripts/install-guided.sh').read_text().replace('exec </dev/tty', ': # Test input is supplied through stdin')
@@ -130,16 +132,18 @@ exit "${INSTALL_TEST_FAIL:-0}"
     env['SW_INSTALLER_UI'] = 'terminal'
     names = ['04-launcher.sh', '05-webview2.sh', '06-settings.sh', 'install-dxmt.sh',
              'build-signin-tools.sh', '09-mac-launcher.sh', '10-fresh-signin.sh', '01-storage.sh']
-    executable(project / 'setup.sh', 'print setup >> "$INSTALL_TEST_CALLS"\n')
+    # Setup creates the new prefix.
+    executable(project / 'setup.sh', f'mkdir -p {shlex.quote(str(desktop))}\nprint setup >> "$INSTALL_TEST_CALLS"\n')
     executable(scripts / 'open-dashboard.sh', 'exit 0\n')
     for name in names:
         executable(scripts / name, f'print {name} >> "$INSTALL_TEST_CALLS"\n'
                    f'if [[ "${{INSTALL_TEST_FAIL_STAGE:-}}" == {name} ]]; then exit 37; fi\n')
     executable(fakebin / 'wineserver', 'print -r -- "stop:$1" >> "$INSTALL_TEST_CALLS"\n')
+    executable(fakebin / 'wine', 'print -r -- "wine:$1" >> "$INSTALL_TEST_CALLS"\n')
     (tools / 'configure-shortcut.py').write_text('import os\nfrom pathlib import Path\nPath(os.environ["INSTALL_TEST_CALLS"]).open("a").write("configure\\n")\n')
     # A completed vendor installation provides the shortcut when preparation finishes.
     with (scripts / 'build-signin-tools.sh').open('a') as output:
-        output.write(f'touch {shlex.quote(str(desktop / "SOLIDWORKS Design.lnk"))}\n')
+        output.write(f'[[ -n "${{INSTALL_TEST_NO_SHORTCUT:-}}" ]] || touch {shlex.quote(str(desktop / "SOLIDWORKS Design.lnk"))}\n')
     (tools / 'require-stopped.py').write_text('import sys\nsys.exit(37)\n')
     msi = base / 'launcher.msi'
     msi.touch()
@@ -148,25 +152,38 @@ exit "${INSTALL_TEST_FAIL:-0}"
     wizard = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
                             input=f'\nhttps://example.com/\n{msi}\n\n', capture_output=True, text=True)
     assert wizard.returncode == 0, wizard.stderr
-    assert calls.read_text().splitlines() == ['setup', '04-launcher.sh', '05-webview2.sh',
+    full_run = ['01-storage.sh', 'setup', '04-launcher.sh', '05-webview2.sh',
             '06-settings.sh', 'stop:-k', 'stop:-w', 'install-dxmt.sh',
             'build-signin-tools.sh', 'configure', '09-mac-launcher.sh', '10-fresh-signin.sh']
+    assert calls.read_text().splitlines() == full_run
+    # Every run starts from a new prefix: after a warning, the old one (with SOLIDWORKS) is deleted.
     calls.unlink()
-    refused = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
-                             input='', capture_output=True)
-    assert refused.returncode == 37 and not calls.exists()
-    shutil.rmtree(project / 'cache/install-state')
-    (desktop / 'SOLIDWORKS Design.lnk').unlink()
+    (prefix / 'drive_c/old-file').touch()
+    again = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
+                           input=f'\nhttps://example.com/\n{msi}\n\n', capture_output=True, text=True)
+    assert again.returncode == 0, again.stderr
+    assert 'SOLIDWORKS is already installed' in again.stdout and not (prefix / 'drive_c/old-file').exists()
+    assert calls.read_text().splitlines() == full_run
+    # Something that is not a Wine prefix is never deleted.
+    calls.unlink()
+    shutil.rmtree(prefix)
+    (prefix / 'keep').mkdir(parents=True)
+    kept = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
+                          input=f'\nhttps://example.com/\n{msi}\n', capture_output=True, text=True)
+    assert kept.returncode == 1 and (prefix / 'keep').exists() and 'does not look like a Wine prefix' in kept.stderr
+    shutil.rmtree(prefix)
+    desktop.mkdir(parents=True)
+    calls.unlink()
     env['INSTALL_TEST_FAIL_STAGE'] = '05-webview2.sh'
     failed = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
                             input=f'\nhttps://example.com/\n{msi}\n', capture_output=True, text=True)
     assert failed.returncode == 37
-    assert calls.read_text().splitlines() == ['setup', '04-launcher.sh', '05-webview2.sh']
+    # A failure stops the Wine that setup started.
+    assert calls.read_text().splitlines() == ['01-storage.sh', 'setup', '04-launcher.sh', '05-webview2.sh', 'stop:-k'], calls.read_text()
     assert not (project / 'cache/install-state/runtime').exists()
     assert 'Setup stopped during: installing WebView2' in failed.stderr
 
     # Dialog mode: answers come from macOS dialogs (a fake osascript), defaulting to Maker Cloud.
-    shutil.rmtree(project / 'cache/install-state')
     (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
     env.pop('INSTALL_TEST_FAIL_STAGE')
     executable(scripts / 'open-dashboard.sh', 'print -r -- "browser:$1" >> "$INSTALL_TEST_CALLS"\n')
@@ -177,21 +194,21 @@ elif [[ "$script" == *"display dialog"* ]]; then print -r -- "dialog:$5" >> "$IN
 fi
 ''')
     dialogs = dict(env, SW_INSTALLER_UI='dialogs', INSTALL_TEST_MSI=str(msi), HOME=str(base / 'home'))
+    shutil.rmtree(project / 'cache/installers', ignore_errors=True)
     calls.unlink()
     wizard = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=dialogs,
                             input='', capture_output=True, text=True)
     assert wizard.returncode == 0, wizard.stderr
     steps = calls.read_text().splitlines()
-    assert steps[0] == 'dialog:Start' and 'browser:https://www.solidworks.com/maker-cloud' in steps
+    assert steps[:2] == ['01-storage.sh', 'dialog:Start'] and 'browser:https://www.solidworks.com/maker-cloud' in steps, steps
     assert f'dialog:launcher:{base}/home/Downloads/3DEXPERIENCELauncher.msi' in steps and steps[-2:] == ['dialog:Open SOLIDWORKS', '10-fresh-signin.sh']
-    # Quit (AppleScript "User canceled") stops quietly with status 130 and records nothing new.
-    shutil.rmtree(project / 'cache/install-state')
+    # Quit (AppleScript "User canceled") at the welcome stops quietly with status 130.
     (desktop / 'SOLIDWORKS Design.lnk').unlink()
     executable(fakebin / 'osascript', 'print -u2 "execution error: User canceled. (-128)"\nexit 1\n')
     calls.unlink()
     quit = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=dialogs,
                           input='', capture_output=True, text=True)
-    assert quit.returncode == 130 and not calls.exists() and 'Setup stopped' not in quit.stderr
+    assert quit.returncode == 130 and calls.read_text().splitlines() == ['01-storage.sh'] and 'Setup stopped' not in quit.stderr
 
     # Window mode: the installer window talks to the script over stdin/stderr. A fake window
     # answers each prompt; the dashboard browser is closed once SOLIDWORKS is installed.
@@ -199,9 +216,9 @@ fi
                'trap \'print browser-closed >> "$INSTALL_TEST_CALLS"; exit 0\' TERM\n'
                'while true; do sleep 0.1; done\n')
 
-    def run_window(answer):
+    def run_window(answer, **extra):
         calls.unlink(missing_ok=True)
-        window = dict(env, SW_INSTALLER_UI='app', HOME=str(base / 'home'))
+        window = dict(env, SW_INSTALLER_UI='app', HOME=str(base / 'home'), **extra)
         window.pop('INSTALL_TEST_FAIL_STAGE', None)
         process = subprocess.Popen(['zsh', str(scripts / 'install-guided.sh')], env=window, text=True,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -216,19 +233,22 @@ fi
                     process.stdin.flush()
         return process.wait(timeout=30), events
 
-    shutil.rmtree(project / 'cache/install-state', ignore_errors=True)
     (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
+    shutil.rmtree(project / 'cache/installers', ignore_errors=True)
     answers = {'message': 'ok', 'url': 'https://www.solidworks.com/maker-cloud', 'msi': str(msi)}
     code, events = run_window(lambda fields: answers.get(fields[0]))
     assert code == 0, events
     kinds = [fields[0] for fields in events]
-    assert events[0][:3] == ['message', 'Start', 'Welcome'] and kinds[-1] == 'finished', events
+    welcome = events[kinds.index('message')]
+    assert welcome[:3] == ['message', 'Start', 'Welcome'] and kinds[-1] == 'finished', events
     assert events[kinds.index('url')][:2] == ['url', 'https://www.solidworks.com/maker-cloud']
     assert events[kinds.index('msi')][1] == f'{base}/home/Downloads/3DEXPERIENCELauncher.msi'
-    assert '\\n' in events[0][3], 'multi-line text is escaped onto one line'
-    order = ['wine', 'launcher', 'components', 'solidworks', 'finish']
+    assert '\\n' in welcome[3], 'multi-line text is escaped onto one line'
+    order = ['launcher', 'wine', 'components', 'solidworks', 'finish']
     steps = [fields[1] for fields in events if fields[0] == 'stage']
     assert steps == sorted(steps, key=order.index) and steps[-1] == 'finish', steps
+    # The hands-on steps (browser, Launcher file) come before the long Wine preparation.
+    assert kinds.index('msi') < next(i for i, fields in enumerate(events) if fields[:3] == ['stage', 'wine', 'preparing Wine']), events
     # The final launch is detached from the window, so it may land just after the exit.
     for _ in range(50):
         if '10-fresh-signin.sh' in calls.read_text():
@@ -236,8 +256,15 @@ fi
         time.sleep(0.1)
     lines = calls.read_text().splitlines()
     assert lines.index('browser-closed') < lines.index('configure') and lines[-1] == '10-fresh-signin.sh', lines
+    # A reinstall offers the Launcher copy kept from the last installation.
+    (desktop / 'SOLIDWORKS Design.lnk').unlink()
+    code, events = run_window(lambda fields: answers.get(fields[0]))
+    assert code == 0 and next(fields for fields in events if fields[0] == 'msi')[1] == str(project / 'cache/installers/3DEXPERIENCELauncher.msi'), events
+    for _ in range(50):
+        if '10-fresh-signin.sh' in calls.read_text():
+            break
+        time.sleep(0.1)
     # Quitting from the window stops quietly, without a failure, and closes the browser.
-    shutil.rmtree(project / 'cache/install-state')
     (desktop / 'SOLIDWORKS Design.lnk').unlink()
     def quit_at_msi(fields):
         if fields[0] == 'msi':
@@ -250,12 +277,9 @@ fi
         return {'message': 'ok', 'url': 'https://example.com/'}.get(fields[0])
     code, events = run_window(quit_at_msi)
     assert code == 130 and 'failed' not in [fields[0] for fields in events], events
+    # Wine has not started yet at that point, so only the browser needs closing.
     assert calls.read_text().splitlines()[-1] == 'browser-closed', calls.read_text()
     # Install SOLIDWORKS: the window waits for the shortcut; continuing early asks again.
-    (tools / 'require-stopped.py').write_text('')
-    (project / 'cache/install-state').mkdir(parents=True, exist_ok=True)
-    for name in ('wine', 'launcher', 'runtime'):
-        (project / 'cache/install-state' / name).touch()
     (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
     asked = []
     def install_late(fields):
@@ -265,15 +289,25 @@ fi
             if len(asked) == 2:
                 (desktop / 'SOLIDWORKS Design.lnk').touch()
             return 'ok'
-        return {'url': 'https://example.com/'}.get(fields[0])
-    code, events = run_window(install_late)
+        return {'message': 'ok', 'url': 'https://example.com/', 'msi': str(msi)}.get(fields[0])
+    code, events = run_window(install_late, INSTALL_TEST_NO_SHORTCUT='1')
     assert code == 0 and len(asked) == 2 and asked[1].startswith('SOLIDWORKS is not installed yet'), events
+    # The Launcher service is started before anyone is sent to the dashboard's Install button.
+    assert 'wine:wineboot' in calls.read_text().splitlines(), calls.read_text()
     for _ in range(50):
         if '10-fresh-signin.sh' in calls.read_text():
             break
         time.sleep(0.1)
     assert calls.read_text().splitlines()[-1] == '10-fresh-signin.sh'
-    (tools / 'require-stopped.py').write_text('import sys\nsys.exit(37)\n')
+    # Quitting at the Install SOLIDWORKS step stops the Wine services setup started.
+    (desktop / 'SOLIDWORKS Design.lnk').unlink()
+    def quit_at_install(fields):
+        if fields[0] == 'message' and fields[2] == 'Install SOLIDWORKS':
+            return '@@quit'
+        return {'message': 'ok', 'url': 'https://example.com/', 'msi': str(msi)}.get(fields[0])
+    code, events = run_window(quit_at_install, INSTALL_TEST_NO_SHORTCUT='1')
+    lines = calls.read_text().splitlines()
+    assert code == 130 and lines[-3:] == ['wine:wineboot', 'browser-closed', 'stop:-k'], (lines, events)
     env['INSTALL_TEST_FAIL_STAGE'] = '05-webview2.sh'
 
     # Structured Unicode .lnk with optional preceding fields and account arguments.

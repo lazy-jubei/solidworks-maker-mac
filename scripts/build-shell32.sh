@@ -4,7 +4,11 @@
 # Needs Xcode Command Line Tools and bison 3 (Homebrew, or tools/ on Intel); about 15 minutes the first time.
 set -eu
 source "${0:A:h}/env.sh"
-python3 "${0:A:h}/tools/require-stopped.py" "$WINE_APP/Contents/Resources/wine/bin/wineserver"
+# SW_BUILD_ONLY=1 only compiles (setup.sh runs that alongside winetricks); installing into
+# the Wine bundle needs the prefix stopped.
+if [[ -z "${SW_BUILD_ONLY:-}" ]]; then
+  python3 "${0:A:h}/tools/require-stopped.py" "$WINE_APP/Contents/Resources/wine/bin/wineserver"
+fi
 PATCHES="${0:A:h}/patches"
 BUILD="${SW_BUILD:-$VOL/build}"
 SRC="$BUILD/src-wine-$WINE_VERSION"
@@ -64,6 +68,7 @@ if [[ ! -f "$OBJ/Makefile" ]]; then
 fi
 ( cd "$OBJ" && arch -x86_64 make -j"$(/usr/sbin/sysctl -n hw.ncpu)" dlls/shell32/x86_64-windows/shell32.dll dlls/wininet/x86_64-windows/wininet.dll programs/services/x86_64-windows/services.exe dlls/msi/x86_64-windows/msi.dll dlls/msi/i386-windows/msi.dll dlls/wow64/x86_64-windows/wow64.dll dlls/kernelbase/x86_64-windows/kernelbase.dll dlls/comctl32/x86_64-windows/comctl32.dll dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll )
 
+if [[ -n "${SW_BUILD_ONLY:-}" ]]; then exit 0; fi
 DST="$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/shell32.dll"
 [[ -f "$DST.stock" ]] || cp "$DST" "$DST.stock"
 cp "$OBJ/dlls/shell32/x86_64-windows/shell32.dll" "$DST"
