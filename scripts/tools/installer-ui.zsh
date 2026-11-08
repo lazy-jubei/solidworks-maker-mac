@@ -56,7 +56,8 @@ end run' "$1" "$installer_title" >/dev/null || true
 
 # installer_ask_dashboard: prints the URL to open in the Windows-identifying browser.
 installer_ask_dashboard() {
-  local text='Sign in to SOLIDWORKS for Makers in the browser that opens next.
+  local text='Next, a browser opens so you can download the 3DEXPERIENCE Launcher:
+sign in to SOLIDWORKS for Makers, then download the Launcher from your dashboard.
 
 Keep this address to start at SOLIDWORKS Maker Cloud, or paste your own Makers dashboard URL.'
   local url
@@ -76,23 +77,45 @@ end run' "$text" "$SW_MAKERS_URL" "$installer_title")"
   print -r -- "$url"
 }
 
-# installer_choose_msi: prints the path of the Launcher MSI the user picked.
+# installer_choose_msi: prints the path of the downloaded Launcher MSI. The field starts at
+# the browser's usual download location; Browse… opens a file picker in Downloads.
 installer_choose_msi() {
-  local text='In the browser, sign in and download the 3DEXPERIENCE Launcher.
+  local default="${SW_LAUNCHER_MSI:-$HOME/Downloads/3DEXPERIENCELauncher.msi}"
+  local text='Download the 3DEXPERIENCE Launcher in the browser that just opened:
+sign in, then download the Launcher from your Makers dashboard.
 
-When the download has finished, choose the .msi file it saved (usually in Downloads).'
+When the download has finished, click Continue.'
   local msi
   if (( installer_gui )); then
-    installer_message "$text" 'Choose Launcher File…'
+    # Loops until the path names an existing file, so an unfinished download is not an error.
     msi="$(installer_osascript '
 on run argv
-  set picked to choose file with prompt (item 1 of argv) default location (path to downloads folder)
-  return POSIX path of picked
-end run' 'Select the 3DEXPERIENCE Launcher installer (.msi)')"
+  set intro to item 1 of argv
+  set chosen to item 2 of argv
+  set prompt to intro
+  repeat
+    set reply to display dialog prompt with title (item 3 of argv) default answer chosen buttons {"Quit", "Browse…", "Continue"} default button 3 cancel button 1 with icon note
+    set chosen to text returned of reply
+    if button returned of reply is "Browse…" then
+      try
+        set chosen to POSIX path of (choose file with prompt "Select the 3DEXPERIENCE Launcher installer (.msi)" default location (path to downloads folder))
+      end try
+      set prompt to intro
+    else
+      try
+        set found to (POSIX file chosen) as alias
+        return chosen
+      on error
+        set prompt to "No file was found at this path yet. Wait for the download to finish, or click Browse… to find it." & return & return & intro
+      end try
+    end if
+  end repeat
+end run' "$text" "$default" "$installer_title")"
   else
     print -u2 -r -- "$text"
-    read -r 'msi?Launcher MSI path (you can drag it from Finder): '
+    read -r "msi?Launcher MSI path [$default]: "
     msi="${(Q)msi}"
+    [[ -n "$msi" ]] || msi="$default"
   fi
   [[ -f "$msi" && "${msi:e:l}" == msi ]] || { print -u2 "That is not an .msi file: $msi"; return 1; }
   print -r -- "$msi"
