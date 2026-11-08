@@ -125,6 +125,8 @@ exit "${INSTALL_TEST_FAIL:-0}"
                                          for key, value in envfile.items()))
     guided = (root / 'scripts/install-guided.sh').read_text().replace('exec </dev/tty', ': # Test input is supplied through stdin')
     (scripts / 'install-guided.sh').write_text(guided)
+    shutil.copy(root / 'scripts/tools/installer-ui.zsh', tools / 'installer-ui.zsh')
+    env['SW_INSTALLER_UI'] = 'terminal'
     names = ['04-launcher.sh', '05-webview2.sh', '06-settings.sh', 'install-dxmt.sh',
              'build-signin-tools.sh', '09-mac-launcher.sh', '10-fresh-signin.sh', '01-storage.sh']
     executable(project / 'setup.sh', 'print setup >> "$INSTALL_TEST_CALLS"\n')
@@ -143,7 +145,7 @@ exit "${INSTALL_TEST_FAIL:-0}"
     calls.unlink()
     env.pop('INSTALL_TEST_FAIL')
     wizard = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
-                            input=f'https://example.com/\n{msi}\n', capture_output=True, text=True)
+                            input=f'\nhttps://example.com/\n{msi}\n\n', capture_output=True, text=True)
     assert wizard.returncode == 0, wizard.stderr
     assert calls.read_text().splitlines() == ['setup', '04-launcher.sh', '05-webview2.sh',
             '06-settings.sh', 'stop:-k', 'stop:-w', 'install-dxmt.sh',
@@ -156,10 +158,40 @@ exit "${INSTALL_TEST_FAIL:-0}"
     (desktop / 'SOLIDWORKS Design.lnk').unlink()
     env['INSTALL_TEST_FAIL_STAGE'] = '05-webview2.sh'
     failed = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
-                            input=f'https://example.com/\n{msi}\n', capture_output=True, text=True)
+                            input=f'\nhttps://example.com/\n{msi}\n', capture_output=True, text=True)
     assert failed.returncode == 37
     assert calls.read_text().splitlines() == ['setup', '04-launcher.sh', '05-webview2.sh']
     assert not (project / 'cache/install-state/runtime').exists()
+    assert 'Setup stopped during: installing WebView2' in failed.stderr
+
+    # Dialog mode: answers come from macOS dialogs (a fake osascript), defaulting to Maker Cloud.
+    shutil.rmtree(project / 'cache/install-state')
+    (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
+    env.pop('INSTALL_TEST_FAIL_STAGE')
+    executable(scripts / 'open-dashboard.sh', 'print -r -- "browser:$1" >> "$INSTALL_TEST_CALLS"\n')
+    executable(fakebin / 'osascript', '''script="$2"
+if [[ "$script" == *"default answer"* ]]; then print -r -- "$5"
+elif [[ "$script" == *"choose file"* ]]; then print -r -- "$INSTALL_TEST_MSI"
+elif [[ "$script" == *"display dialog"* ]]; then print -r -- "dialog:$5" >> "$INSTALL_TEST_CALLS"; print "button returned:$5"
+fi
+''')
+    dialogs = dict(env, SW_INSTALLER_UI='dialogs', INSTALL_TEST_MSI=str(msi))
+    calls.unlink()
+    wizard = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=dialogs,
+                            input='', capture_output=True, text=True)
+    assert wizard.returncode == 0, wizard.stderr
+    steps = calls.read_text().splitlines()
+    assert steps[0] == 'dialog:Start' and 'browser:https://www.solidworks.com/maker-cloud' in steps
+    assert 'dialog:Choose Launcher File…' in steps and steps[-2:] == ['dialog:Open SOLIDWORKS', '10-fresh-signin.sh']
+    # Quit (AppleScript "User canceled") stops quietly with status 130 and records nothing new.
+    shutil.rmtree(project / 'cache/install-state')
+    (desktop / 'SOLIDWORKS Design.lnk').unlink()
+    executable(fakebin / 'osascript', 'print -u2 "execution error: User canceled. (-128)"\nexit 1\n')
+    calls.unlink()
+    quit = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=dialogs,
+                          input='', capture_output=True, text=True)
+    assert quit.returncode == 130 and not calls.exists() and 'Setup stopped' not in quit.stderr
+    env['INSTALL_TEST_FAIL_STAGE'] = '05-webview2.sh'
 
     # Structured Unicode .lnk with optional preceding fields and account arguments.
     header = bytearray(76)
