@@ -12,8 +12,12 @@ Paste this into Terminal:
 curl -fsSL https://raw.githubusercontent.com/lazy-jubei/solidworks-maker-mac/main/install.sh -o /tmp/solidworks-maker-install.sh && zsh /tmp/solidworks-maker-install.sh
 ```
 
-Follow the prompts. The script installs prerequisites and prepares Wine, then guides
-you through installing SOLIDWORKS using your own Makers subscription and signing in.
+An installer window opens and walks you through the rest: it installs prerequisites and
+prepares Wine, then guides you through installing SOLIDWORKS using your own Makers
+subscription and signing in. Its Terminal pane shows the details. The window is
+built on your Mac from `scripts/tools/InstallerApp.swift` with Apple's Command Line Tools,
+so there is no downloaded app to approve. Closing it stops setup and the sign-in browser;
+reopen it with `zsh ~/SolidWorksMakerMac/scripts/install-guided.sh` to continue where you left off.
 
 After setup, open **SolidWorks (Wine)** in your Applications folder.
 
