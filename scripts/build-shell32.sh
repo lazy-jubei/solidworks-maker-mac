@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Build Wine's 64-bit shell32.dll with zip folder support and install it into the Wine
 # bundle (the original is kept as shell32.dll.stock). Everything stays on the image.
-# Needs Xcode Command Line Tools and Homebrew bison; about 15 minutes the first time.
+# Needs Xcode Command Line Tools and bison 3 (Homebrew, or tools/ on Intel); about 15 minutes the first time.
 set -eu
 source "${0:A:h}/env.sh"
 python3 "${0:A:h}/tools/require-stopped.py" "$WINE_APP/Contents/Resources/wine/bin/wineserver"
@@ -49,8 +49,7 @@ fi
 
 python3 -I "$PATCHES/comctl32-button-capture.py" "$SRC"
 
-brew_prefix="$(brew --prefix)"
-export PATH="$LLVM/bin:$brew_prefix/opt/bison/bin:/usr/bin:/bin:$brew_prefix/bin"
+export PATH="$(sw_build_path "$LLVM/bin")"
 export TMPDIR="$VOL/tmp"
 mkdir -p "$OBJ"
 if [[ ! -f "$OBJ/Makefile" ]]; then

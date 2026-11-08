@@ -89,6 +89,26 @@ exit "${INSTALL_TEST_FAIL:-0}"
     env['INSTALL_TEST_FAIL'] = '37'
     assert subprocess.run(['zsh', str(requirements)], env=env, capture_output=True).returncode == 37
 
+    # Intel without Homebrew: never run Homebrew's installer (it refuses Intel); use tools/.
+    tools = base / 'tools'
+    (tools / 'bin').mkdir(parents=True)
+    executable(tools / 'bin/bison', 'print "bison (GNU Bison) 3.8.2"\n')
+    executable(tools / 'bin/cabextract', 'print "cabextract version 1.11"\n')
+    (fakebin / 'cabextract').unlink()
+    intel = dict(env, SW_TOOLS=str(tools), PATH=str(fakebin) + ':/usr/bin:/bin')
+    intel.pop('INSTALL_TEST_FAIL')
+    (fakebin / 'brew').rename(base / 'brew-hidden')
+    calls.unlink()
+    result = subprocess.run(['zsh', str(requirements)], env=intel, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert not calls.exists()
+    (tools / 'bin/bison').unlink()
+    intel['INSTALL_TEST_DOWNLOAD_FAIL'] = '1'
+    result = subprocess.run(['zsh', str(requirements)], env=intel, capture_output=True, text=True)
+    assert result.returncode != 0 and calls.read_text().splitlines() == ['download']
+    (base / 'brew-hidden').rename(fakebin / 'brew')
+    executable(fakebin / 'cabextract', 'exit 0\n')
+
     # Run the full guided orchestrator against fake stages and vendor artifacts.
     project = base / 'guided checkout'
     scripts = project / 'scripts'

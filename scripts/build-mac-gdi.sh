@@ -15,8 +15,7 @@ for line in subprocess.check_output(['ps','-axo','comm='],text=True).splitlines(
         sys.exit('Close the selected Wine prefix before replacing its Mac graphics driver.')
 PY
 python3 "$ROOT/scripts/patches/winemac-opengl-gdi.py" "$SRC"
-brew_prefix="$(brew --prefix)"
-export PATH="$BUILD/llvm-mingw/bin:$brew_prefix/opt/bison/bin:/usr/bin:/bin:$brew_prefix/bin"
+export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/winemac.drv/winemac.so > "$ROOT/logs/winemac-gdi-build.log" 2>&1
 python3 - "$OBJ/dlls/winemac.drv/winemac.so" "$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-unix/winemac.so" <<'PY'
