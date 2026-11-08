@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import struct
 import subprocess
+import time
 import tarfile
 from tempfile import TemporaryDirectory
 
@@ -191,6 +192,88 @@ fi
     quit = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=dialogs,
                           input='', capture_output=True, text=True)
     assert quit.returncode == 130 and not calls.exists() and 'Setup stopped' not in quit.stderr
+
+    # Window mode: the installer window talks to the script over stdin/stderr. A fake window
+    # answers each prompt; the dashboard browser is closed once SOLIDWORKS is installed.
+    executable(scripts / 'open-dashboard.sh', 'print -r -- "browser:$1" >> "$INSTALL_TEST_CALLS"\n'
+               'trap \'print browser-closed >> "$INSTALL_TEST_CALLS"; exit 0\' TERM\n'
+               'while true; do sleep 0.1; done\n')
+
+    def run_window(answer):
+        calls.unlink(missing_ok=True)
+        window = dict(env, SW_INSTALLER_UI='app', HOME=str(base / 'home'))
+        window.pop('INSTALL_TEST_FAIL_STAGE', None)
+        process = subprocess.Popen(['zsh', str(scripts / 'install-guided.sh')], env=window, text=True,
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        events = []
+        for line in process.stdout:
+            if line.startswith('@@sw\t'):
+                fields = line.rstrip('\n').split('\t')[1:]
+                events.append(fields)
+                reply = answer(fields)
+                if reply is not None:
+                    process.stdin.write(reply + '\n')
+                    process.stdin.flush()
+        return process.wait(timeout=30), events
+
+    shutil.rmtree(project / 'cache/install-state', ignore_errors=True)
+    (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
+    answers = {'message': 'ok', 'url': 'https://www.solidworks.com/maker-cloud', 'msi': str(msi)}
+    code, events = run_window(lambda fields: answers.get(fields[0]))
+    assert code == 0, events
+    kinds = [fields[0] for fields in events]
+    assert events[0][:3] == ['message', 'Start', 'Welcome'] and kinds[-1] == 'finished', events
+    assert events[kinds.index('url')][:2] == ['url', 'https://www.solidworks.com/maker-cloud']
+    assert events[kinds.index('msi')][1] == f'{base}/home/Downloads/3DEXPERIENCELauncher.msi'
+    assert '\\n' in events[0][3], 'multi-line text is escaped onto one line'
+    order = ['wine', 'launcher', 'components', 'solidworks', 'finish']
+    steps = [fields[1] for fields in events if fields[0] == 'stage']
+    assert steps == sorted(steps, key=order.index) and steps[-1] == 'finish', steps
+    # The final launch is detached from the window, so it may land just after the exit.
+    for _ in range(50):
+        if '10-fresh-signin.sh' in calls.read_text():
+            break
+        time.sleep(0.1)
+    lines = calls.read_text().splitlines()
+    assert lines.index('browser-closed') < lines.index('configure') and lines[-1] == '10-fresh-signin.sh', lines
+    # Quitting from the window stops quietly, without a failure, and closes the browser.
+    shutil.rmtree(project / 'cache/install-state')
+    (desktop / 'SOLIDWORKS Design.lnk').unlink()
+    def quit_at_msi(fields):
+        if fields[0] == 'msi':
+            # Quit once the browser is up, as a person would.
+            for _ in range(50):
+                if calls.exists() and 'browser:' in calls.read_text():
+                    break
+                time.sleep(0.1)
+            return '@@quit'
+        return {'message': 'ok', 'url': 'https://example.com/'}.get(fields[0])
+    code, events = run_window(quit_at_msi)
+    assert code == 130 and 'failed' not in [fields[0] for fields in events], events
+    assert calls.read_text().splitlines()[-1] == 'browser-closed', calls.read_text()
+    # Install SOLIDWORKS: the window waits for the shortcut; continuing early asks again.
+    (tools / 'require-stopped.py').write_text('')
+    (project / 'cache/install-state').mkdir(parents=True, exist_ok=True)
+    for name in ('wine', 'launcher', 'runtime'):
+        (project / 'cache/install-state' / name).touch()
+    (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
+    asked = []
+    def install_late(fields):
+        if fields[0] == 'message' and fields[2] == 'Install SOLIDWORKS':
+            assert fields[4] == str(desktop / 'SOLIDWORKS Design.lnk'), fields
+            asked.append(fields[3])
+            if len(asked) == 2:
+                (desktop / 'SOLIDWORKS Design.lnk').touch()
+            return 'ok'
+        return {'url': 'https://example.com/'}.get(fields[0])
+    code, events = run_window(install_late)
+    assert code == 0 and len(asked) == 2 and asked[1].startswith('SOLIDWORKS is not installed yet'), events
+    for _ in range(50):
+        if '10-fresh-signin.sh' in calls.read_text():
+            break
+        time.sleep(0.1)
+    assert calls.read_text().splitlines()[-1] == '10-fresh-signin.sh'
+    (tools / 'require-stopped.py').write_text('import sys\nsys.exit(37)\n')
     env['INSTALL_TEST_FAIL_STAGE'] = '05-webview2.sh'
 
     # Structured Unicode .lnk with optional preceding fields and account arguments.
