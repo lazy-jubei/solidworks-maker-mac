@@ -132,14 +132,15 @@ end run' "$1" "$installer_title" >/dev/null || true
   fi
 }
 
-# installer_ask_dashboard: prints the URL to open in the Windows-identifying browser.
+# installer_ask_dashboard [intro]: prints the URL to open in the Windows-identifying browser.
 installer_ask_dashboard() {
-  local text='Next, a separate browser opens so you can download the 3DEXPERIENCE Launcher: sign in to SOLIDWORKS for Makers, then download the Launcher from your dashboard.
+  local text="${1:-Next, a separate browser opens so you can download the 3DEXPERIENCE Launcher: sign in to SOLIDWORKS for Makers, then download the Launcher from your dashboard.}
 
-Keep this address to start at SOLIDWORKS Maker Cloud, or paste your own Makers dashboard URL.'
+Keep this address to start at SOLIDWORKS Maker Cloud, or paste your own Makers dashboard URL."
   local url
   if [[ "$installer_ui" == app ]]; then
-    installer_emit url "$SW_MAKERS_URL" "$text"
+    # The window explains the address field itself.
+    installer_emit url "$SW_MAKERS_URL" "${1:-First, a separate browser opens so you can download the 3DEXPERIENCE Launcher: sign in to SOLIDWORKS for Makers, then download the Launcher from your dashboard. After that, the long part of setup runs by itself.}"
     url="$(installer_app_read)"
   elif (( installer_gui )); then
     url="$(installer_osascript '
@@ -161,6 +162,9 @@ end run' "$text" "$SW_MAKERS_URL" "$installer_title")"
 # the browser's usual download location; Browse… opens a file picker in Downloads.
 installer_choose_msi() {
   local default="${SW_LAUNCHER_MSI:-$HOME/Downloads/3DEXPERIENCELauncher.msi}"
+  # A reinstall can reuse the copy kept from the last installation.
+  local kept="$CACHE/installers/3DEXPERIENCELauncher.msi"
+  if [[ -z "${SW_LAUNCHER_MSI:-}" && ! -f "$default" && -f "$kept" ]]; then default="$kept"; fi
   local text='Download the 3DEXPERIENCE Launcher in the browser that just opened: sign in, then download the Launcher from your Makers dashboard.
 
 When the download has finished, click Continue.'

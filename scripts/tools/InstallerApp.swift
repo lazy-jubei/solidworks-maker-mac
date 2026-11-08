@@ -10,7 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum Step: Int, CaseIterable, Identifiable {
-    case wine, launcher, components, solidworks, finish
+    case launcher, wine, components, solidworks, finish
     var id: Int { rawValue }
 
     init?(key: String) {
@@ -33,6 +33,33 @@ enum Step: Int, CaseIterable, Identifiable {
         case .finish: return "Finish"
         }
     }
+
+    // Shown under the step in the sidebar.
+    var subtitle: String {
+        switch self {
+        case .wine: return "Automatic · 30–60 min first time"
+        case .launcher: return "Sign in · a few minutes"
+        case .components: return "Automatic · a few minutes"
+        case .solidworks: return "From your Makers dashboard"
+        case .finish: return "Mac app and first sign-in"
+        }
+    }
+
+    // Shown while the step runs.
+    var explanation: String {
+        switch self {
+        case .wine:
+            return "Building Wine, the Windows compatibility layer SOLIDWORKS runs in, and a new Wine prefix (its Windows C: drive) to install into. The first time takes 30–60 minutes; later installs reuse the prepared parts and take a few minutes. You can leave it running."
+        case .launcher:
+            return "The 3DEXPERIENCE Launcher is Dassault Systèmes' helper that downloads and installs SOLIDWORKS. It comes from your Makers dashboard."
+        case .components:
+            return "Installing the Launcher and the parts SOLIDWORKS sign-in needs (Microsoft WebView2 and small helpers) into Wine. This takes a few minutes and needs nothing from you."
+        case .solidworks:
+            return "SOLIDWORKS itself is installed from your Makers dashboard, through the Launcher."
+        case .finish:
+            return "Creating SolidWorks (Wine) in your Applications folder, then opening SOLIDWORKS so you can sign in."
+        }
+    }
 }
 
 enum Page: Equatable {
@@ -51,7 +78,7 @@ struct LogLine: Identifiable {
 
 final class Installer: ObservableObject {
     @Published var page: Page = .working
-    @Published var step: Step = .wine
+    @Published var step: Step = .launcher
     @Published var stage = "Starting"
     @Published var status = ""
     @Published var log: [LogLine] = []
@@ -258,6 +285,15 @@ final class Installer: ObservableObject {
         waitFound = waitFor.isEmpty || FileManager.default.fileExists(atPath: waitFor)
     }
 
+    // The dashboard browser is a separate app (Chrome for Testing); bring it to the front.
+    var browser: NSRunningApplication? {
+        NSRunningApplication.runningApplications(withBundleIdentifier: "com.google.chrome.for.testing").first
+    }
+
+    func showBrowser() {
+        browser?.activate()
+    }
+
     func browseMSI() {
         let panel = NSOpenPanel()
         panel.message = "Select the 3DEXPERIENCE Launcher installer (.msi)"
@@ -381,11 +417,16 @@ struct Sidebar: View {
                 .font(.headline)
                 .padding(.bottom, 10)
             ForEach(Step.allCases) { step in
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
                     icon(for: step).frame(width: 18, height: 18)
-                    Text(step.title)
-                        .fontWeight(step == installer.step && !installer.finished ? .semibold : .regular)
-                        .foregroundStyle(step.rawValue > installer.step.rawValue ? .secondary : .primary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(step.title)
+                            .fontWeight(step == installer.step && !installer.finished ? .semibold : .regular)
+                            .foregroundStyle(step.rawValue > installer.step.rawValue ? .secondary : .primary)
+                        Text(step.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -416,7 +457,11 @@ struct PageView: View {
             switch installer.page {
             case .working:
                 heading(installer.step.title)
-                Text(sentence(installer.stage) + "…").font(.title3)
+                paragraph(installer.step.explanation)
+                    .foregroundStyle(.secondary)
+                Text(sentence(installer.stage) + "…")
+                    .font(.headline)
+                    .padding(.top, 6)
                 ProgressView().progressViewStyle(.linear)
                 if !installer.status.isEmpty {
                     Text(installer.status).foregroundStyle(.secondary)
@@ -444,11 +489,16 @@ struct PageView: View {
                     }
                 }
             case let .url(text):
-                heading("Sign in to SOLIDWORKS for Makers")
+                heading("Open your Makers dashboard")
                 paragraph(text)
-                TextField("https://", text: $installer.field)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.body)
+                paragraph("Click Open Browser. It identifies itself as Windows so the dashboard offers its Windows downloads, and it does not touch your usual browser or its passwords. Your sign-in goes straight to Dassault Systèmes.")
+                    .foregroundStyle(.secondary)
+                DisclosureGroup("Use a different address") {
+                    TextField("https://", text: $installer.field)
+                        .textFieldStyle(.roundedBorder)
+                        .padding(.top, 6)
+                }
+                .padding(.top, 4)
             case let .msi(text):
                 heading("Download the 3DEXPERIENCE Launcher")
                 paragraph(text)
@@ -560,7 +610,10 @@ struct BottomBar: View {
             switch installer.page {
             case .working:
                 EmptyView()
-            case let .message(_, _, button, _):
+            case let .message(_, _, button, waitFor):
+                if !waitFor.isEmpty && installer.browser != nil {
+                    Button("Show Browser") { installer.showBrowser() }
+                }
                 primary(button) { installer.reply("ok") }
                     .disabled(!installer.waitFound)
             case .url:
