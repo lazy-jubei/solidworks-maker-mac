@@ -37,10 +37,10 @@ You sign in and download SOLIDWORKS directly from Dassault Systèmes. The script
 then reads your installed shortcut’s settings and creates the Mac app shortcut.
 
 Wine 11.16 is patched to support the installer’s ZIP extraction and MSI feature
-selection. Prerequisites come from Homebrew where it is available. Homebrew no longer
-supports Intel Macs, so on an Intel Mac without it the installer builds bison and
-cabextract from their release sources into `tools/` and uses the Command Line Tools'
-Python. On Apple Silicon, it also enables a Rosetta mode-switch workaround and
+selection. bison and cabextract come from MacPorts, on Intel and Apple Silicon Macs;
+the installer installs MacPorts from its notarized package if it isn't there, which
+needs an administrator password once. Python and the compilers come from Apple's
+Command Line Tools. On Apple Silicon, it also enables a Rosetta mode-switch workaround and
 corrects ARM64 host reporting during startup. An OpenGL/GDI presentation patch
 fixes viewport clipping on macOS, and a targeted mouse-capture fix lets the feature
 editor’s OK/Cancel buttons receive clicks correctly.
