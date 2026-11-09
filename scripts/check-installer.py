@@ -5,6 +5,7 @@ import os
 import shlex
 from pathlib import Path
 import shutil
+import signal
 import struct
 import subprocess
 import time
@@ -162,7 +163,7 @@ exit "${INSTALL_TEST_FAIL:-0}"
     again = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
                            input=f'\nhttps://example.com/\n{msi}\n\n', capture_output=True, text=True)
     assert again.returncode == 0, again.stderr
-    assert 'SOLIDWORKS is already installed' in again.stdout and not (prefix / 'drive_c/old-file').exists()
+    assert 'SolidWorks is already installed' in again.stdout and not (prefix / 'drive_c/old-file').exists()
     assert calls.read_text().splitlines() == full_run
     # Something that is not a Wine prefix is never deleted.
     calls.unlink()
@@ -181,7 +182,7 @@ exit "${INSTALL_TEST_FAIL:-0}"
     # A failure stops the Wine that setup started.
     assert calls.read_text().splitlines() == ['01-storage.sh', 'setup', '04-launcher.sh', '05-webview2.sh', 'stop:-k'], calls.read_text()
     assert not (project / 'cache/install-state/runtime').exists()
-    assert 'Setup stopped during: installing WebView2' in failed.stderr
+    assert 'Setup stopped while installing WebView2' in failed.stderr
 
     # Dialog mode: answers come from macOS dialogs (a fake osascript), defaulting to Maker Cloud.
     (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
@@ -201,7 +202,7 @@ fi
     assert wizard.returncode == 0, wizard.stderr
     steps = calls.read_text().splitlines()
     assert steps[:2] == ['01-storage.sh', 'dialog:Start'] and 'browser:https://www.solidworks.com/maker-cloud' in steps, steps
-    assert f'dialog:launcher:{base}/home/Downloads/3DEXPERIENCELauncher.msi' in steps and steps[-2:] == ['dialog:Open SOLIDWORKS', '10-fresh-signin.sh']
+    assert f'dialog:launcher:{base}/home/Downloads/3DEXPERIENCELauncher.msi' in steps and steps[-2:] == ['dialog:Open SolidWorks', '10-fresh-signin.sh']
     # Quit (AppleScript "User canceled") at the welcome stops quietly with status 130.
     (desktop / 'SOLIDWORKS Design.lnk').unlink()
     executable(fakebin / 'osascript', 'print -u2 "execution error: User canceled. (-128)"\nexit 1\n')
@@ -216,12 +217,14 @@ fi
                'trap \'print browser-closed >> "$INSTALL_TEST_CALLS"; exit 0\' TERM\n'
                'while true; do sleep 0.1; done\n')
 
+    window_process = [None]
     def run_window(answer, **extra):
         calls.unlink(missing_ok=True)
         window = dict(env, SW_INSTALLER_UI='app', HOME=str(base / 'home'), **extra)
         window.pop('INSTALL_TEST_FAIL_STAGE', None)
         process = subprocess.Popen(['zsh', str(scripts / 'install-guided.sh')], env=window, text=True,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        window_process[0] = process
         events = []
         for line in process.stdout:
             if line.startswith('@@sw\t'):
@@ -244,7 +247,7 @@ fi
     assert events[kinds.index('url')][:2] == ['url', 'https://www.solidworks.com/maker-cloud']
     assert events[kinds.index('msi')][1] == f'{base}/home/Downloads/3DEXPERIENCELauncher.msi'
     assert '\\n' in welcome[3], 'multi-line text is escaped onto one line'
-    order = ['launcher', 'wine', 'components', 'solidworks', 'finish']
+    order = ['launcher', 'wine', 'components', 'start', 'solidworks', 'finish']
     steps = [fields[1] for fields in events if fields[0] == 'stage']
     assert steps == sorted(steps, key=order.index) and steps[-1] == 'finish', steps
     # The hands-on steps (browser, Launcher file) come before the long Wine preparation.
@@ -264,6 +267,34 @@ fi
         if '10-fresh-signin.sh' in calls.read_text():
             break
         time.sleep(0.1)
+    # Relaunch Chrome on the Launcher download page reopens Chrome only if it was closed,
+    # and the page keeps waiting for the file.
+    (desktop / 'SOLIDWORKS Design.lnk').unlink()
+    relaunched = []
+    def relaunch_at_msi(fields):
+        if fields[0] == 'msi' and not relaunched:
+            relaunched.append(1)
+            for _ in range(50):
+                if calls.exists() and 'browser:' in calls.read_text():
+                    break
+                time.sleep(0.1)
+            os.kill(int((project / 'logs/dashboard-browser.pid').read_text()), signal.SIGTERM)
+            for _ in range(50):
+                if 'browser-closed' in calls.read_text():
+                    break
+                time.sleep(0.1)
+            window_process[0].stdin.write('@@relaunch\n@@relaunch\n' + str(msi) + '\n')
+            window_process[0].stdin.flush()
+            return None
+        return answers.get(fields[0])
+    code, events = run_window(relaunch_at_msi)
+    assert code == 0 and [fields[0] for fields in events].count('msi') == 1, events
+    for _ in range(50):
+        if '10-fresh-signin.sh' in calls.read_text():
+            break
+        time.sleep(0.1)
+    lines = calls.read_text().splitlines()
+    assert sum(line.startswith('browser:') for line in lines) == 2, lines
     # Quitting from the window stops quietly, without a failure, and closes the browser.
     (desktop / 'SOLIDWORKS Design.lnk').unlink()
     def quit_at_msi(fields):
@@ -279,19 +310,63 @@ fi
     assert code == 130 and 'failed' not in [fields[0] for fields in events], events
     # Wine has not started yet at that point, so only the browser needs closing.
     assert calls.read_text().splitlines()[-1] == 'browser-closed', calls.read_text()
-    # Install SOLIDWORKS: the window waits for the shortcut; continuing early asks again.
+    # Start from Chrome / Install SOLIDWORKS: no Continue button; the script follows the
+    # SOLIDWORKS installer itself (fake ps/lsof stand in for the Wine processes).
+    processes = base / 'processes'
+    executable(fakebin / 'ps', 'if [[ -n "${INSTALL_TEST_PS:-}" ]]; then cat "$INSTALL_TEST_PS" 2>/dev/null; exit 0; fi\nexec /bin/ps "$@"\n')
+    executable(fakebin / 'lsof', 'pid="$2"\nif [[ " ${INSTALL_TEST_PREFIX_PIDS:-} " == *" $pid "* ]]; then print -r -- "p$pid"; print -r -- "n$INSTALL_TEST_PREFIX/drive_c/x"; fi\n')
+    installer_line = '4242 C:\\ProgramData\\DassaultSystemes\\SOLIDWORKSSetup.exe /install\n'
+    background = ('4243 C:\\windows\\system32\\svchost.exe -k netsvcs\n'
+                  '4244 Z:\\Users\\me\\OtherWine\\Installer.Exe -RunAsInvoker\n'
+                  '4245 C:\\Program Files\\Dassault Systemes\\3DEXPERIENCE Launcher\\3DEXPERIENCELauncherSysTray.exe\n')
+    watch = dict(INSTALL_TEST_NO_SHORTCUT='1', INSTALL_TEST_PS=str(processes),
+                 INSTALL_TEST_PREFIX_PIDS='4242 4243 4245', INSTALL_TEST_PREFIX=str(prefix), SW_WATCH_INTERVAL='0.05')
     (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
-    asked = []
-    def install_late(fields):
-        if fields[0] == 'message' and fields[2] == 'Install SOLIDWORKS':
-            assert fields[4] == str(desktop / 'SOLIDWORKS Design.lnk'), fields
-            asked.append(fields[3])
-            if len(asked) == 2:
+    processes.write_text(background)
+    waits = []
+    def install_flow(fields):
+        if fields[0] == 'wait':
+            waits.append(fields)
+            if fields[1] == 'Install SolidWorks from Chrome':
+                assert fields[4] == 'browser', fields
+                if len(waits) == 1:
+                    # Only the Launcher's own background programs run: still waiting.
+                    time.sleep(0.4)
+                    assert len(waits) == 1, waits
+                    # Chrome is closed; Relaunch Chrome opens it again.
+                    pid = int((project / 'logs/dashboard-browser.pid').read_text())
+                    os.kill(pid, signal.SIGTERM)
+                    for _ in range(50):
+                        if 'browser-closed' in calls.read_text():
+                            break
+                        time.sleep(0.1)
+                    window_process[0].stdin.write('@@relaunch\n')
+                    window_process[0].stdin.flush()
+                    for _ in range(50):
+                        if calls.read_text().count('browser:') == 2:
+                            break
+                        time.sleep(0.1)
+                    assert calls.read_text().count('browser:') == 2, calls.read_text()
+                processes.write_text(background + installer_line)
+            elif len(waits) == 2:
+                # The installer closes before SOLIDWORKS is installed.
+                processes.write_text(background)
+            else:
                 (desktop / 'SOLIDWORKS Design.lnk').touch()
-            return 'ok'
+                time.sleep(0.3)
+                processes.write_text(background)
+            return None
         return {'message': 'ok', 'url': 'https://example.com/', 'msi': str(msi)}.get(fields[0])
-    code, events = run_window(install_late, INSTALL_TEST_NO_SHORTCUT='1')
-    assert code == 0 and len(asked) == 2 and asked[1].startswith('SOLIDWORKS is not installed yet'), events
+    code, events = run_window(install_flow, **watch)
+    assert code == 0, events
+    titles = [fields[1] for fields in waits]
+    assert titles == ['Install SolidWorks from Chrome', 'Installing SolidWorks',
+                      'Install SolidWorks from Chrome', 'Installing SolidWorks'], waits
+    assert waits[1][3] == 'Running SOLIDWORKSSetup.exe' and 'closed before SolidWorks finished' in waits[2][3], waits
+    notes = [fields[1] for fields in events if fields[0] == 'notify']
+    assert any('Close the installer window' in note for note in notes), notes
+    steps = [fields[1] for fields in events if fields[0] == 'stage']
+    assert steps[-1] == 'finish' and steps.index('start') < steps.index('solidworks'), steps
     # The Launcher service is started before anyone is sent to the dashboard's Install button.
     assert 'wine:wineboot' in calls.read_text().splitlines(), calls.read_text()
     for _ in range(50):
@@ -299,13 +374,15 @@ fi
             break
         time.sleep(0.1)
     assert calls.read_text().splitlines()[-1] == '10-fresh-signin.sh'
-    # Quitting at the Install SOLIDWORKS step stops the Wine services setup started.
+    # Quitting while waiting for the installer (the window sends TERM) stops the Wine services.
     (desktop / 'SOLIDWORKS Design.lnk').unlink()
-    def quit_at_install(fields):
-        if fields[0] == 'message' and fields[2] == 'Install SOLIDWORKS':
-            return '@@quit'
+    processes.write_text(background)
+    def quit_at_start(fields):
+        if fields[0] == 'wait':
+            window_process[0].terminate()
+            return None
         return {'message': 'ok', 'url': 'https://example.com/', 'msi': str(msi)}.get(fields[0])
-    code, events = run_window(quit_at_install, INSTALL_TEST_NO_SHORTCUT='1')
+    code, events = run_window(quit_at_start, **watch)
     lines = calls.read_text().splitlines()
     assert code == 130 and lines[-3:] == ['wine:wineboot', 'browser-closed', 'stop:-k'], (lines, events)
     env['INSTALL_TEST_FAIL_STAGE'] = '05-webview2.sh'
