@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Build Wine's 64-bit shell32.dll with zip folder support and install it into the Wine
 # bundle (the original is kept as shell32.dll.stock). Everything stays on the image.
-# Needs Xcode Command Line Tools and bison 3 (Homebrew, or tools/ on Intel); about 15 minutes the first time.
+# Needs Xcode Command Line Tools and bison 3 (from MacPorts); about 15 minutes the first time.
 set -eu
 source "${0:A:h}/env.sh"
 # SW_BUILD_ONLY=1 only compiles (setup.sh runs that alongside winetricks); installing into

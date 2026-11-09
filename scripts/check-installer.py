@@ -66,50 +66,46 @@ exit 2
     env['INSTALL_TEST_FAIL'] = '37'
     assert run().returncode == 37
 
-    # Use a sandbox Homebrew prefix; intercept every command that can install anything.
+    # Prerequisites come from MacPorts: a sandbox MacPorts prefix with a fake port command;
+    # every command that could install anything is intercepted.
     requirements = base / 'requirements.sh'
     requirements.write_text((root / 'scripts/tools/check-setup-requirements.sh').read_text()
-                            .replace('/opt/homebrew/bin:/usr/local/bin:', '')
                             .replace('/usr/sbin/sysctl', 'sysctl'))
-    brew_prefix = base / 'brew'
-    (brew_prefix / 'opt/bison/bin').mkdir(parents=True)
-    executable(brew_prefix / 'opt/bison/bin/bison', 'exit 0\n')
-    env['INSTALL_TEST_BREW'] = str(brew_prefix)
+    shutil.copy(root / 'scripts/tools/macports.sh', base / 'macports.sh')
+    ports = base / 'macports-bin'
+    ports.mkdir()
+    executable(ports / 'port', '''if [[ "$1" == -q && "$2" == installed ]]; then
+  [[ -x "${0:h}/$3" ]] && print -r -- "  $3 @1.0_0 (active)"; exit 0
+fi
+print -r -- "port $*" >> "$INSTALL_TEST_CALLS"
+[[ -z "${INSTALL_TEST_FAIL:-}" ]] || exit "$INSTALL_TEST_FAIL"
+if [[ "$1" == -N && "$2" == install ]]; then
+  shift 2
+  for name in "$@"; do print 'exit 0' > "${0:h}/$name"; chmod +x "${0:h}/$name"; done
+fi
+''')
+    executable(fakebin / 'sudo', 'if [[ "$1" == -n ]]; then exit 0; fi\nprint -r -- "sudo" >> "$INSTALL_TEST_CALLS"\nexec "$@"\n')
+    env['MACPORTS_BIN'] = str(ports)
     env.pop('INSTALL_TEST_FAIL')
     executable(fakebin / 'xcrun', 'exit 0\n')
     executable(fakebin / 'arch', 'exit 0\n')
     executable(fakebin / 'sysctl', 'print 0\n')
-    executable(fakebin / 'cabextract', 'exit 0\n')
-    executable(fakebin / 'brew', '''if [[ "$1" == --prefix ]]; then print -r -- "$INSTALL_TEST_BREW"; exit; fi
-print -r -- "$*" >> "$INSTALL_TEST_CALLS"
-exit "${INSTALL_TEST_FAIL:-0}"
-''')
-    calls.unlink()
+    calls.unlink(missing_ok=True)
     result = subprocess.run(['zsh', str(requirements)], env=env, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
-    assert calls.read_text().splitlines() == ['install python cabextract']
-    env['INSTALL_TEST_FAIL'] = '37'
-    assert subprocess.run(['zsh', str(requirements)], env=env, capture_output=True).returncode == 37
-
-    # Intel without Homebrew: never run Homebrew's installer (it refuses Intel); use tools/.
-    tools = base / 'tools'
-    (tools / 'bin').mkdir(parents=True)
-    executable(tools / 'bin/bison', 'print "bison (GNU Bison) 3.8.2"\n')
-    executable(tools / 'bin/cabextract', 'print "cabextract version 1.11"\n')
-    (fakebin / 'cabextract').unlink()
-    intel = dict(env, SW_TOOLS=str(tools), PATH=str(fakebin) + ':/usr/bin:/bin')
-    intel.pop('INSTALL_TEST_FAIL')
-    (fakebin / 'brew').rename(base / 'brew-hidden')
+    # Only the missing ports are installed, as root through sudo.
+    assert calls.read_text().splitlines() == ['sudo', 'port -N install bison cabextract'], calls.read_text()
     calls.unlink()
-    result = subprocess.run(['zsh', str(requirements)], env=intel, capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    assert not calls.exists()
-    (tools / 'bin/bison').unlink()
-    intel['INSTALL_TEST_DOWNLOAD_FAIL'] = '1'
-    result = subprocess.run(['zsh', str(requirements)], env=intel, capture_output=True, text=True)
-    assert result.returncode != 0 and calls.read_text().splitlines() == ['download']
-    (base / 'brew-hidden').rename(fakebin / 'brew')
+    result = subprocess.run(['zsh', str(requirements)], env=env, capture_output=True, text=True)
+    assert result.returncode == 0 and not calls.exists(), result.stderr
+    # A failed install stops setup.
+    (ports / 'bison').unlink()
+    env['INSTALL_TEST_FAIL'] = '37'
+    assert subprocess.run(['zsh', str(requirements)], env=env, capture_output=True).returncode != 0
+    env.pop('INSTALL_TEST_FAIL')
+    executable(ports / 'bison', 'exit 0\n')
     executable(fakebin / 'cabextract', 'exit 0\n')
+    env['INSTALL_TEST_FAIL'] = '37'
 
     # Run the full guided orchestrator against fake stages and vendor artifacts.
     project = base / 'guided checkout'
