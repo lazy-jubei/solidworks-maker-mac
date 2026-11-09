@@ -6,7 +6,7 @@
 # Values are passed to osascript as arguments, never pasted into AppleScript source.
 
 SW_MAKERS_URL="${SW_MAKERS_URL:-https://www.solidworks.com/maker-cloud}"
-installer_title='SOLIDWORKS Maker on Mac'
+installer_title='SolidWorks Maker'
 installer_ui_dir="${${(%):-%x}:A:h}"
 installer_window_app="${SW_TOOLS:-$ROOT/tools}/SOLIDWORKS Maker Installer.app"
 case "${SW_INSTALLER_UI:-auto}" in
@@ -75,7 +75,7 @@ installer_app_read() {
   local reply
   IFS= read -r reply || reply='@@quit'
   if [[ "$reply" == '@@quit' ]]; then
-    print -u2 'Installation stopped. Open the installer again to continue where you left off.'
+    print -u2 'Setup cancelled.'
     exit 130
   fi
   print -r -- "$reply"
@@ -94,7 +94,7 @@ installer_osascript() {
   shift
   if ! result="$(osascript -e "$script" -- "$@" 2>&1)"; then
     if [[ "$result" == *'(-128)'* ]]; then
-      print -u2 'Installation stopped. Run the same command again to continue where you left off.'
+      print -u2 'Setup cancelled.'
       exit 130
     fi
     print -u2 -r -- "$result"
@@ -134,18 +134,18 @@ end run' "$1" "$installer_title" >/dev/null || true
 
 # installer_ask_dashboard [intro]: prints the URL to open in the Windows-identifying browser.
 installer_ask_dashboard() {
-  local text="${1:-Next, a separate browser opens so you can download the 3DEXPERIENCE Launcher: sign in to SOLIDWORKS for Makers, then download the Launcher from your dashboard.}
+  local text="${1:-Next, a Chrome window opens. Sign in to your SolidWorks Maker account there and download the 3DEXPERIENCE Launcher.}
 
-Keep this address to start at SOLIDWORKS Maker Cloud, or paste your own Makers dashboard URL."
+Keep this address, or paste your own SolidWorks Maker dashboard address."
   local url
   if [[ "$installer_ui" == app ]]; then
     # The window explains the address field itself.
-    installer_emit url "$SW_MAKERS_URL" "${1:-First, a separate browser opens so you can download the 3DEXPERIENCE Launcher: sign in to SOLIDWORKS for Makers, then download the Launcher from your dashboard. After that, the long part of setup runs by itself.}"
+    installer_emit url "$SW_MAKERS_URL" "${1:-Click Open Chrome. In the Chrome window, sign in to your SolidWorks Maker account and download the 3DEXPERIENCE Launcher.}"
     url="$(installer_app_read)"
   elif (( installer_gui )); then
     url="$(installer_osascript '
 on run argv
-  set reply to display dialog (item 1 of argv) with title (item 3 of argv) default answer (item 2 of argv) buttons {"Quit", "Open Browser"} default button 2 cancel button 1 with icon note
+  set reply to display dialog (item 1 of argv) with title (item 3 of argv) default answer (item 2 of argv) buttons {"Quit", "Open Chrome"} default button 2 cancel button 1 with icon note
   return text returned of reply
 end run' "$text" "$SW_MAKERS_URL" "$installer_title")"
   else
@@ -154,7 +154,7 @@ end run' "$text" "$SW_MAKERS_URL" "$installer_title")"
   fi
   url="${${url##[[:space:]]#}%%[[:space:]]#}"
   [[ -n "$url" ]] || url="$SW_MAKERS_URL"
-  [[ "$url" == https://* ]] || { print -u2 'Use an HTTPS address from SOLIDWORKS or your Makers account.'; return 1; }
+  [[ "$url" == https://* ]] || { print -u2 'Use an https:// address from your SolidWorks Maker account.'; return 1; }
   print -r -- "$url"
 }
 
@@ -165,13 +165,18 @@ installer_choose_msi() {
   # A reinstall can reuse the copy kept from the last installation.
   local kept="$CACHE/installers/3DEXPERIENCELauncher.msi"
   if [[ -z "${SW_LAUNCHER_MSI:-}" && ! -f "$default" && -f "$kept" ]]; then default="$kept"; fi
-  local text='Download the 3DEXPERIENCE Launcher in the browser that just opened: sign in, then download the Launcher from your Makers dashboard.
+  local text='In the Chrome window, sign in to your SolidWorks Maker account and download the 3DEXPERIENCE Launcher.
 
-When the download has finished, click Continue.'
+When the download is done, click Continue.'
   local msi
   if [[ "$installer_ui" == app ]]; then
     installer_emit msi "$default" "$text"
-    msi="$(installer_app_read)"
+    # Relaunch Chrome answers with @@relaunch; keep waiting for the file after it.
+    while true; do
+      msi="$(installer_app_read)"
+      [[ "$msi" == @@relaunch ]] || break
+      if (( $+functions[installer_reopen_browser] )); then installer_reopen_browser; fi
+    done
   elif (( installer_gui )); then
     # Loops until the path names an existing file, so an unfinished download is not an error.
     msi="$(installer_osascript '
@@ -209,13 +214,13 @@ end run' "$text" "$default" "$installer_title")"
 
 # installer_failed <stage>: tell the user in a dialog when a step stops the installer.
 installer_failed() {
-  print -u2 -r -- "Setup stopped during: $1"
+  print -u2 -r -- "Setup stopped while $1"
   if [[ "$installer_ui" == app ]]; then
     installer_emit failed "$1"
   elif (( installer_gui )); then
     installer_osascript '
 on run argv
   display alert (item 1 of argv) message (item 2 of argv) as critical buttons {"OK"} default button 1
-end run' "Setup stopped during: $1" 'The Terminal window shows the details. Fix the problem, then run the same command again: completed steps are skipped.' >/dev/null || true
+end run' "Setup stopped while $1" 'Details are in the Terminal window. Fix the problem, then run the same command again.' >/dev/null || true
   fi
 }

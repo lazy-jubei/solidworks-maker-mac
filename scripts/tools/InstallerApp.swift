@@ -10,7 +10,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 enum Step: Int, CaseIterable, Identifiable {
-    case launcher, wine, components, solidworks, finish
+    case launcher, wine, components, start, solidworks, finish
     var id: Int { rawValue }
 
     init?(key: String) {
@@ -18,6 +18,7 @@ enum Step: Int, CaseIterable, Identifiable {
         case "wine": self = .wine
         case "launcher": self = .launcher
         case "components": self = .components
+        case "start": self = .start
         case "solidworks": self = .solidworks
         case "finish": self = .finish
         default: return nil
@@ -29,7 +30,8 @@ enum Step: Int, CaseIterable, Identifiable {
         case .wine: return "Prepare Wine"
         case .launcher: return "Download the Launcher"
         case .components: return "Install components"
-        case .solidworks: return "Install SOLIDWORKS"
+        case .start: return "Start from Chrome"
+        case .solidworks: return "Install SolidWorks"
         case .finish: return "Finish"
         }
     }
@@ -40,8 +42,9 @@ enum Step: Int, CaseIterable, Identifiable {
         case .wine: return "Automatic · 30–60 min first time"
         case .launcher: return "Sign in · a few minutes"
         case .components: return "Automatic · a few minutes"
-        case .solidworks: return "From your Makers dashboard"
-        case .finish: return "Mac app and first sign-in"
+        case .start: return "Click Install SolidWorks"
+        case .solidworks: return "In the SolidWorks installer"
+        case .finish: return "Add to Applications, sign in"
         }
     }
 
@@ -49,15 +52,17 @@ enum Step: Int, CaseIterable, Identifiable {
     var explanation: String {
         switch self {
         case .wine:
-            return "Building Wine, the Windows compatibility layer SOLIDWORKS runs in, and a new Wine prefix (its Windows C: drive) to install into. The first time takes 30–60 minutes; later installs reuse the prepared parts and take a few minutes. You can leave it running."
+            return "Setting up Wine, which runs SolidWorks on your Mac. The first time takes 30–60 minutes. After that, a few minutes. You can leave this running."
         case .launcher:
-            return "The 3DEXPERIENCE Launcher is Dassault Systèmes' helper that downloads and installs SOLIDWORKS. It comes from your Makers dashboard."
+            return "In the Chrome window, sign in to your SolidWorks Maker account and download the 3DEXPERIENCE Launcher. SolidWorks installs through it."
         case .components:
-            return "Installing the Launcher and the parts SOLIDWORKS sign-in needs (Microsoft WebView2 and small helpers) into Wine. This takes a few minutes and needs nothing from you."
+            return "Installing the Launcher and the parts SolidWorks needs to sign in. This takes a few minutes."
+        case .start:
+            return "In the Chrome window, click Install SolidWorks."
         case .solidworks:
-            return "SOLIDWORKS itself is installed from your Makers dashboard, through the Launcher."
+            return "Follow the SolidWorks installer in its own window."
         case .finish:
-            return "Creating SolidWorks (Wine) in your Applications folder, then opening SOLIDWORKS so you can sign in."
+            return "Adding SolidWorks (Wine) to Applications, then opening SolidWorks so you can sign in."
         }
     }
 }
@@ -65,6 +70,8 @@ enum Step: Int, CaseIterable, Identifiable {
 enum Page: Equatable {
     case working
     case message(title: String, text: String, button: String, waitFor: String)
+    // The script is watching for something to happen; no answer is needed.
+    case waiting(title: String, text: String)
     case url(text: String)
     case msi(text: String)
     case failed(stage: String)
@@ -86,6 +93,7 @@ final class Installer: ObservableObject {
     @Published var field = ""
     @Published var msiFound = false
     @Published var waitFound = false
+    @Published var chromeRunning = false
 
     let root: URL?
     private(set) var group: pid_t = 0
@@ -101,11 +109,17 @@ final class Installer: ObservableObject {
 
     var finished: Bool { if case .finished = page { return true } else { return false } }
     var failed: Bool { if case .failed = page { return true } else { return false } }
-    var busy: Bool { running && page == .working }
+    var busy: Bool {
+        guard running else { return false }
+        if case .message = page { return false }
+        if case .url = page { return false }
+        if case .msi = page { return false }
+        return true
+    }
 
     func start() {
         guard let root, FileManager.default.fileExists(atPath: root.appendingPathComponent("scripts/install-guided.sh").path) else {
-            append("Could not find the SOLIDWORKS Maker on Mac folder. Run scripts/install-guided.sh from Terminal.")
+            append("Couldn't find the SolidWorks Maker folder. Run scripts/install-guided.sh from Terminal.")
             page = .failed(stage: "finding the installation folder")
             showTerminal = true
             return
@@ -155,7 +169,7 @@ final class Installer: ObservableObject {
         guard result == 0 else {
             close(inFDs[1])
             close(outFDs[0])
-            append("Could not start the installer: \(String(cString: strerror(result)))")
+            append("Couldn't start setup: \(String(cString: strerror(result)))")
             page = .failed(stage: "starting the installer")
             return
         }
@@ -208,6 +222,10 @@ final class Installer: ObservableObject {
             status = ""
         case "notify":
             status = at(1)
+        case "wait":
+            page = .waiting(title: at(1), text: at(2))
+            status = at(3)
+            if at(4) == "browser" { showBrowser() }
         case "message":
             page = .message(title: at(2), text: at(3), button: at(1), waitFor: at(4))
             checkWait()
@@ -258,7 +276,7 @@ final class Installer: ObservableObject {
         if input >= 0 { close(input); input = -1 }
         if code == 0 {
             step = .finish
-            page = .finished(text: finishedText ?? "Setup is complete.")
+            page = .finished(text: finishedText ?? "Setup is done.")
         } else if code != 130 && code != 143 {
             page = .failed(stage: failedStage ?? stage)
             showTerminal = true
@@ -294,9 +312,30 @@ final class Installer: ObservableObject {
         browser?.activate()
     }
 
+    func checkBrowser() {
+        let running = browser != nil
+        if running != chromeRunning { chromeRunning = running }
+    }
+
+    // Steps that need Chrome offer Relaunch Chrome when it has been closed.
+    var needsChrome: Bool {
+        switch page {
+        case .msi: return true
+        case .waiting: return step == .start
+        default: return false
+        }
+    }
+
+    // Answers that don't move to another page (the script keeps waiting).
+    func send(_ answer: String) {
+        guard input >= 0 else { return }
+        let bytes = Array((answer + "\n").utf8)
+        _ = bytes.withUnsafeBufferPointer { write(input, $0.baseAddress, $0.count) }
+    }
+
     func browseMSI() {
         let panel = NSOpenPanel()
-        panel.message = "Select the 3DEXPERIENCE Launcher installer (.msi)"
+        panel.message = "Choose the 3DEXPERIENCE Launcher file (.msi)"
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         if let msi = UTType(filenameExtension: "msi") { panel.allowedContentTypes = [msi] }
@@ -359,7 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if installer.busy && !closingWindow {
             let alert = NSAlert()
             alert.messageText = "Stop setup?"
-            alert.informativeText = "The current step stops. Open the installer again to continue: completed steps are skipped."
+            alert.informativeText = "Setup stops now. You can run it again later."
             alert.addButton(withTitle: "Stop Setup")
             alert.addButton(withTitle: "Keep Running")
             if alert.runModal() != .alertFirstButtonReturn { return .terminateCancel }
@@ -374,7 +413,7 @@ struct InstallerApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Window("SOLIDWORKS Maker on Mac", id: "installer") {
+        Window("SolidWorks Maker Installer", id: "installer") {
             ContentView(installer: delegate.installer)
                 .frame(minWidth: 780, idealWidth: 820, minHeight: 500, idealHeight: 560)
         }
@@ -413,7 +452,7 @@ struct Sidebar: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("SOLIDWORKS Maker on Mac")
+            Text("SolidWorks Maker")
                 .font(.headline)
                 .padding(.bottom, 10)
             ForEach(Step.allCases) { step in
@@ -440,7 +479,7 @@ struct Sidebar: View {
             Image(systemName: "circle").foregroundStyle(.tertiary)
         } else if installer.failed {
             Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-        } else if installer.busy {
+        } else if installer.busy && step != .start {
             ProgressView().controlSize(.small)
         } else {
             Image(systemName: "arrow.right.circle.fill").foregroundStyle(Color.accentColor)
@@ -478,20 +517,30 @@ struct PageView: View {
                 paragraph(text)
                 if !waitFor.isEmpty {
                     if installer.waitFound {
-                        Label("SOLIDWORKS is installed.", systemImage: "checkmark.circle.fill")
+                        Label("SolidWorks is installed.", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                     } else {
                         HStack(spacing: 8) {
                             ProgressView().controlSize(.small)
-                            Text("Waiting for the SOLIDWORKS installer to finish. Continue becomes available when it has.")
+                            Text("Waiting for SolidWorks to install…")
                                 .foregroundStyle(.secondary)
                         }
                     }
                 }
-            case let .url(text):
-                heading("Open your Makers dashboard")
+            case let .waiting(title, text):
+                heading(title.isEmpty ? installer.step.title : title)
                 paragraph(text)
-                paragraph("Click Open Browser. It identifies itself as Windows so the dashboard offers its Windows downloads, and it does not touch your usual browser or its passwords. Your sign-in goes straight to Dassault Systèmes.")
+                HStack(alignment: .top, spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(chromeClosed ? "Chrome is closed. Click Relaunch Chrome." : installer.status.isEmpty ? "Waiting…" : installer.status)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.top, 4)
+            case let .url(text):
+                heading("Open Chrome")
+                paragraph(text)
+                paragraph("This is a separate Chrome window set up to show the Windows downloads. It doesn't change your usual browser.")
                     .foregroundStyle(.secondary)
                 DisclosureGroup("Use a different address") {
                     TextField("https://", text: $installer.field)
@@ -500,10 +549,10 @@ struct PageView: View {
                 }
                 .padding(.top, 4)
             case let .msi(text):
-                heading("Download the 3DEXPERIENCE Launcher")
+                heading("Download the Launcher")
                 paragraph(text)
                 HStack {
-                    TextField("Launcher installer (.msi)", text: $installer.field)
+                    TextField("Launcher file (.msi)", text: $installer.field)
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { installer.checkMSI() }
                     Button("Browse…") { installer.browseMSI() }
@@ -514,7 +563,7 @@ struct PageView: View {
                 } else {
                     HStack(spacing: 8) {
                         ProgressView().controlSize(.small)
-                        Text("Waiting for the download. Continue becomes available when the file is found.")
+                        Text(chromeClosed ? "Chrome is closed. Click Relaunch Chrome." : "Waiting for the download…")
                             .foregroundStyle(.secondary)
                     }
                 }
@@ -522,19 +571,22 @@ struct PageView: View {
                 Label("Setup stopped", systemImage: "exclamationmark.triangle.fill")
                     .font(.title2.bold())
                     .foregroundStyle(.red)
-                paragraph("Setup stopped while \(stage). The terminal below shows the details.\n\nFix the problem, then click Try Again: completed steps are skipped.")
+                paragraph("Setup stopped while \(stage). Details are in the terminal below.\n\nFix the problem, then click Try Again.")
             case let .finished(text):
-                Label("Setup complete", systemImage: "checkmark.seal.fill")
+                Label("Setup is done", systemImage: "checkmark.seal.fill")
                     .font(.title2.bold())
                     .foregroundStyle(.green)
                 paragraph(text)
             }
         }
         .onReceive(poll) { _ in
+            installer.checkBrowser()
             if case .msi = installer.page { installer.checkMSI() }
             if case .message = installer.page { installer.checkWait() }
         }
     }
+
+    private var chromeClosed: Bool { installer.needsChrome && !installer.chromeRunning }
 
     private func heading(_ text: String) -> some View {
         Text(text).font(.title2.bold())
@@ -610,16 +662,19 @@ struct BottomBar: View {
             switch installer.page {
             case .working:
                 EmptyView()
+            case .waiting:
+                chromeButton
             case let .message(_, _, button, waitFor):
-                if !waitFor.isEmpty && installer.browser != nil {
-                    Button("Show Browser") { installer.showBrowser() }
+                if !waitFor.isEmpty && installer.chromeRunning {
+                    Button("Show Chrome") { installer.showBrowser() }
                 }
                 primary(button) { installer.reply("ok") }
                     .disabled(!installer.waitFound)
             case .url:
-                primary("Open Browser") { installer.reply(installer.field.trimmingCharacters(in: .whitespaces)) }
+                primary("Open Chrome") { installer.reply(installer.field.trimmingCharacters(in: .whitespaces)) }
                     .disabled(!installer.field.trimmingCharacters(in: .whitespaces).hasPrefix("https://"))
             case .msi:
+                chromeButton
                 primary("Continue") { installer.reply((installer.field as NSString).expandingTildeInPath) }
                     .disabled(!installer.msiFound)
             case .failed:
@@ -629,6 +684,19 @@ struct BottomBar: View {
             }
         }
         .controlSize(.large)
+    }
+
+    // Show Chrome while it runs; Relaunch Chrome if it was closed at a step that needs it.
+    @ViewBuilder private var chromeButton: some View {
+        if installer.chromeRunning {
+            Button("Show Chrome") { installer.showBrowser() }
+        } else if installer.needsChrome {
+            Button("Relaunch Chrome") {
+                installer.send("@@relaunch")
+                // Bring it forward once it has started.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { installer.showBrowser() }
+            }
+        }
     }
 
     private func primary(_ title: String, action: @escaping () -> Void) -> some View {
