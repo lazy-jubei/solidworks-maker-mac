@@ -15,6 +15,9 @@ for line in subprocess.check_output(['ps','-axo','comm='],text=True).splitlines(
         sys.exit('Close the selected Wine prefix before replacing its Mac graphics driver.')
 PY
 python3 "$ROOT/scripts/patches/winemac-opengl-gdi.py" "$SRC"
+# Tall windows with app-drawn title bars can be dragged onto a shorter screen (always on).
+grep -q setting_frame_from_wine "$SRC/dlls/winemac.drv/cocoa_window.m" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-cross-screen-moves.patch"
 export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/winemac.drv/winemac.so > "$ROOT/logs/winemac-gdi-build.log" 2>&1
