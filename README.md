@@ -12,18 +12,19 @@ Paste this into Terminal:
 curl -fsSL https://raw.githubusercontent.com/lazy-jubei/solidworks-maker-mac/main/install.sh -o /tmp/solidworks-maker-install.sh && zsh /tmp/solidworks-maker-install.sh
 ```
 
-An installer window opens and walks you through the rest: it installs prerequisites and
-prepares Wine, then guides you through installing SOLIDWORKS using your own Makers
-subscription and signing in. Its Terminal pane shows the details. The window is
-built on your Mac from `scripts/tools/InstallerApp.swift` with Apple's Command Line Tools,
-so there is no downloaded app to approve. Closing it stops setup, the sign-in browser and Wine.
+An installer window opens and walks you through the rest. You only need to do two things:
+sign in to your SolidWorks Maker account in a Chrome window and download the
+3DEXPERIENCE Launcher at the start, then click Install SolidWorks in that Chrome window
+at the end. Everything in between runs on its own (30–60 minutes the first time). If
+you close Chrome too early, click Relaunch Chrome.
 
-You sign in and download the 3DEXPERIENCE Launcher first; preparing Wine then runs
-unattended (30–60 minutes the first time), and you install SOLIDWORKS from your
-dashboard at the end. Each run installs into a new Wine prefix and deletes the previous
-one, after a warning if SOLIDWORKS is already installed in it. The Wine build, downloads
-and a clean prepared prefix are kept, so a reinstall prepares Wine in a few minutes.
-To run it again: `zsh ~/SolidWorksMakerMac/scripts/install-guided.sh`.
+The window has a Terminal pane with the details, and is built on your Mac from
+`scripts/tools/InstallerApp.swift` with Apple's Command Line Tools, so there is no
+downloaded app to approve. Closing it stops setup, Chrome and Wine.
+
+Each run deletes the previous install and starts fresh, after a warning if SolidWorks is
+already installed. Downloads and the prepared Wine are kept, so a reinstall takes a few
+minutes. To run it again: `zsh ~/SolidWorksMakerMac/scripts/install-guided.sh`.
 
 After setup, open **SolidWorks (Wine)** in your Applications folder.
 
