@@ -18,6 +18,8 @@ sign in to your SolidWorks Maker account in a Chrome window and download the
 at the end. Everything in between runs on its own (30–60 minutes the first time). If
 you close Chrome too early, click Relaunch Chrome.
 
+![The SolidWorks Maker installer window](assets/installer.png)
+
 The window has a Terminal pane with the details, and is built on your Mac from
 `scripts/tools/InstallerApp.swift` with Apple's Command Line Tools, so there is no
 downloaded app to approve. Closing it stops setup, Chrome and Wine.
