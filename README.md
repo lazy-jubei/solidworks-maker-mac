@@ -1,6 +1,7 @@
 # SOLIDWORKS Maker on Mac
 
 Run SOLIDWORKS for Makers on macOS with Wine.
+Supports both Apple and Intel Macs.
 
 ![SOLIDWORKS on macOS](assets/solidworks.png)
 
