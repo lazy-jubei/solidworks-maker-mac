@@ -13,10 +13,11 @@ curl -fsSL https://raw.githubusercontent.com/lazy-jubei/solidworks-maker-mac/mai
 ```
 
 An installer window opens and walks you through the rest. You only need to do two things:
-sign in to your SolidWorks Maker account in a Chrome window and download the
-3DEXPERIENCE Launcher at the start, then click Install SolidWorks in that Chrome window
-at the end. Everything in between runs on its own (30–60 minutes the first time). If
-you close Chrome too early, click Relaunch Chrome.
+sign in to your SolidWorks Maker account in the bundled Chrome window and download the
+3DEXPERIENCE Launcher at the start, then click Install SolidWorks.
+
+The bundled Chrome development is solely used to change the user agent to identify as Windows. 
+Otherwise the SolidWorks webpage will not allow for downloading the installer or launching SolidWorks.
 
 ![The SolidWorks Maker installer window](assets/installer.png)
 
