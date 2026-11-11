@@ -25,7 +25,8 @@ Otherwise the SolidWorks webpage will not allow for downloading the installer or
 
 The window has a Terminal pane with the details, and is built on your Mac from
 `scripts/tools/InstallerApp.swift` with Apple's Command Line Tools, so there is no
-downloaded app to approve. Closing it stops setup, Chrome and Wine.
+downloaded app to approve. Without the Command Line Tools it falls back to macOS dialogs, and
+`SW_INSTALLER_UI=terminal` asks in Terminal instead. Closing the window stops setup, Chrome and Wine.
 
 Each run deletes the previous install and starts fresh, after a warning if SolidWorks is
 already installed. Downloads and the prepared Wine are kept, so a reinstall takes a few
@@ -48,6 +49,7 @@ needs an administrator password once. Python and the compilers come from Apple's
 Command Line Tools. On Apple Silicon, it also enables a Rosetta mode-switch workaround and
 corrects ARM64 host reporting during startup. An OpenGL/GDI presentation patch
 fixes viewport clipping on macOS, and a targeted mouse-capture fix lets the feature
-editor’s OK/Cancel buttons receive clicks correctly.
+editor’s OK/Cancel buttons receive clicks correctly. With more than one display, windows can
+be dragged onto any of them, and menus and dialogs open on the display SolidWorks is on.
 
 Licensed under [LGPL-2.1-or-later](LICENSE). [Third-party notices](THIRD_PARTY_NOTICES.md).
