@@ -1,0 +1,67 @@
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1183,25 +1183,55 @@
+ /* SOLIDWORKS: the FeatureManager and task pane are siblings of the view's ancestors, not of
+  * the view, and need not be WS_CLIPSIBLINGS. Exclude every visible window above the view or
+  * above one of its ancestors, as the GDI presentation path does. */
++static void exclude_sibling(HWND hwnd, HWND sibling, UINT dpi, HRGN region, HRGN part)
++{
++    RECT rect;
++
++    if (!NtUserIsWindowVisible(sibling) || !NtUserGetWindowRect(sibling, &rect, dpi)) return;
++    NtUserMapWindowPoints(0, hwnd, (POINT *)&rect, 2, dpi);
++    if (NtGdiSetRectRgn(part, rect.left, rect.top, rect.right, rect.bottom))
++        NtGdiCombineRgn(region, region, part, RGN_DIFF);
++}
++
+ static void exclude_higher_siblings(HWND hwnd, HRGN region)
+ {
+     UINT dpi = NtUserGetWinMonitorDpi(hwnd, MDT_RAW_DPI);
+     HWND root = NtUserGetAncestor(hwnd, GA_ROOT), current, sibling;
+-    RECT rect;
+-    HRGN part;
++    HWND siblings[128];
++    HRGN part = 0;
+
+     for (current = hwnd; current && current != root; current = NtUserGetAncestor(current, GA_PARENT))
+     {
+-        for (sibling = NtUserGetWindowRelative(current, GW_HWNDPREV); sibling;
+-             sibling = NtUserGetWindowRelative(sibling, GW_HWNDPREV))
++        HWND previous = NtUserGetWindowRelative(current, GW_HWNDPREV);
++        HWND first;
++        ULONG size, index;
++
++        if (!previous) continue;
++        if (!part && !(part = NtGdiCreateRectRgn(0, 0, 0, 0))) return;
++        first = NtUserGetWindowRelative(current, GW_HWNDFIRST);
++        if (first == previous)
++        {
++            exclude_sibling(hwnd, previous, dpi, region, part);
++            continue;
++        }
++
++        /* The server returns siblings in z-order. Fetch them together instead of
++           sending a server request for every GW_HWNDPREV on every frame. */
++        if (first && !NtUserBuildHwndList(0, first, FALSE, TRUE, 0, ARRAY_SIZE(siblings), siblings, &size))
+         {
+-            if (!NtUserIsWindowVisible(sibling) || !NtUserGetWindowRect(sibling, &rect, dpi)) continue;
+-            NtUserMapWindowPoints(0, hwnd, (POINT *)&rect, 2, dpi);
+-            if (!(part = NtGdiCreateRectRgn(rect.left, rect.top, rect.right, rect.bottom))) continue;
+-            NtGdiCombineRgn(region, region, part, RGN_DIFF);
+-            NtGdiDeleteObjectApp(part);
++            for (index = 0; index + 1 < size && siblings[index] != current; ++index) {}
++            if (index + 1 < size)
++            {
++                while (index) exclude_sibling(hwnd, siblings[--index], dpi, region, part);
++                continue;
++            }
+         }
++
++        /* Oversized or changing sibling lists can still use the original traversal. */
++        for (sibling = previous; sibling; sibling = NtUserGetWindowRelative(sibling, GW_HWNDPREV))
++            exclude_sibling(hwnd, sibling, dpi, region, part);
+     }
++    if (part) NtGdiDeleteObjectApp(part);
+ }
+
+ static int client_surface_get_clip(struct macdrv_client_surface *surface, RECT **ret_rects)

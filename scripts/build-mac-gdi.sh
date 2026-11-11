@@ -33,6 +33,9 @@ grep -q macdrv_flush_present_surface "$SRC/dlls/winemac.drv/surface.c" \
 # Native GL views clipped to their visible region (default; faster than GDI presentation).
 grep -q exclude_higher_siblings "$SRC/dlls/winemac.drv/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-clip-gl-views.patch"
+# Batch the z-order lookup when several siblings can cover the viewport.
+grep -q 'sending a server request for every GW_HWNDPREV' "$SRC/dlls/winemac.drv/window.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-batch-clip-siblings.patch"
 # One PE/unix transition per batch of simple GL calls instead of one per call.
 grep -q wine_batch_execute "$SRC/dlls/opengl32/unix_thunks.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/opengl32-batch-calls.patch"
