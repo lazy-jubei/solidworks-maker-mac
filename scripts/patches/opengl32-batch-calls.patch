@@ -1,0 +1,382 @@
+From: SolidWorks Maker on Mac
+Subject: opengl32: batch simple GL calls into one PE/unix transition
+
+--- a/dlls/opengl32/unix_thunks.c
++++ b/dlls/opengl32/unix_thunks.c
+@@ -27925,6 +27925,8 @@
+     return STATUS_SUCCESS;
+ }
+ 
++static NTSTATUS wine_batch_execute( void *args );
++
+ const unixlib_entry_t __wine_unix_call_funcs[] =
+ {
+     process_attach,
+@@ -31021,10 +31023,27 @@
+     ext_wglSetPbufferAttribARB,
+     ext_wglSetPixelFormatWINE,
+     ext_wglSwapIntervalEXT,
++    wine_batch_execute,
+ };
+ 
+ C_ASSERT(ARRAYSIZE(__wine_unix_call_funcs) == funcs_count);
+ 
++/* Replay GL calls recorded by the PE side, in order, on the calling thread. */
++static NTSTATUS wine_batch_execute( void *args )
++{
++    const struct wine_batch_execute_params *params = args;
++    const char *ptr = params->data, *end = ptr + params->size;
++
++    while (ptr < end)
++    {
++        const struct wine_batch_entry *entry = (const void *)ptr;
++        if (entry->code >= unix_wine_batch_execute || entry->size < sizeof(*entry)) return STATUS_INVALID_PARAMETER;
++        __wine_unix_call_funcs[entry->code]( (void *)(entry + 1) );
++        ptr += entry->size;
++    }
++    return STATUS_SUCCESS;
++}
++
+ #ifdef _WIN64
+ 
+ extern NTSTATUS wow64_thread_attach( void *args );
+@@ -81572,6 +81591,8 @@
+ }
+ 
+ 
++static NTSTATUS wow64_wine_batch_execute( void *args ) { return STATUS_NOT_IMPLEMENTED; }
++
+ const unixlib_entry_t __wine_unix_call_wow64_funcs[] =
+ {
+     process_attach,
+@@ -84668,6 +84689,7 @@
+     wow64_ext_wglSetPbufferAttribARB,
+     wow64_ext_wglSetPixelFormatWINE,
+     wow64_ext_wglSwapIntervalEXT,
++    wow64_wine_batch_execute,
+ };
+ 
+ C_ASSERT(ARRAYSIZE(__wine_unix_call_wow64_funcs) == funcs_count);
+--- a/dlls/opengl32/unixlib.h
++++ b/dlls/opengl32/unixlib.h
+@@ -28872,6 +28872,7 @@
+     unix_wglSetPbufferAttribARB,
+     unix_wglSetPixelFormatWINE,
+     unix_wglSwapIntervalEXT,
++    unix_wine_batch_execute,
+     funcs_count
+ };
+ 
+@@ -28888,6 +28889,26 @@
+     char message[1];
+ };
+ 
++/* Wine batching (SOLIDWORKS Maker on Mac): simple GL calls are recorded on the PE side and
++ * replayed by one unix call, instead of one PE/unix transition (two macOS syscalls) each. */
++struct wine_batch_entry
++{
++    UINT32 code;  /* unix_funcs code */
++    UINT32 size;  /* bytes including this header, multiple of 8; params follow */
++};
++
++struct wine_batch_execute_params
++{
++    TEB *teb;
++    const void *data;
++    UINT32 size;
++};
++
++#ifdef WINE_UNIX_LIB
+ #define UNIX_CALL( func, params ) WINE_UNIX_CALL( unix_ ## func, params )
++#else
++extern NTSTATUS wine_batch_call( unsigned int code, void *params );
++#define UNIX_CALL( func, params ) wine_batch_call( unix_ ## func, params )
++#endif
+ 
+ #endif /* __WINE_OPENGL32_UNIXLIB_H */
+--- a/dlls/opengl32/wgl.c
++++ b/dlls/opengl32/wgl.c
+@@ -1149,6 +1149,27 @@
+     const struct context_attribute_desc *desc;
+     struct context *ctx;
+ 
++    /* Called after nearly every GL call with name -1. Skip the handle table lock: the thread's
++     * current context stays valid while current, and handle entries are never freed. */
++    if (name == -1)
++    {
++        TEB *teb = NtCurrentTeb();
++        HGLRC current = teb->glCurrentRC;
++        UINT index = ((UINT_PTR)current & 0xffff) - 1;
++        struct handle_entry *ptr;
++
++        /* glReserved1[21] remembers the context last found fully marked on this thread. */
++        if (current == teb->glReserved1[21]) return;
++        if (!current || index >= ARRAY_SIZE(contexts.handles)) return;
++        ptr = contexts.handles + index;
++        if (ULongToHandle( ReadNoFence( (LONG *)&ptr->handle ) ) != current) return;
++        if (!(ctx = context_from_opengl_client_context( ptr->context ))) return;
++        if (ctx->used != -1) WARN( "Unsupported attribute on context %p\n", ctx );
++        ctx->used |= -1;
++        teb->glReserved1[21] = current;
++        return;
++    }
++
+     if (!(ctx = get_current_context())) return;
+ 
+     if (name == GL_FRAMEBUFFER)
+@@ -3074,6 +3095,247 @@
+ }
+ 
+ /***********************************************************************
++ * GL call batching (SOLIDWORKS Maker on Mac)
++ *
++ * On macOS every PE/unix transition costs two syscalls (thread %gs switches), and legacy
++ * immediate-mode apps make about a million GL calls per second. Calls that return nothing
++ * and read only fixed-size input are recorded in a per-thread buffer and replayed in order by
++ * one unix call, made before any other GL call (queries, swaps, context changes), when the
++ * buffer is full, and at thread exit. WINE_GL_BATCH=0 disables it.
++ */
++#define BATCH_CAPACITY (32 * 1024)  /* stays in L1/L2; a flush covers ~1000 calls */
++#define WINE_GL_RESERVED_BATCH 20  /* glReserved1 slot holding the thread's struct gl_batch */
++
++struct gl_batch
++{
++    char *data;
++    UINT used;
++};
++
++static LONG batch_state;  /* 0 unknown, 1 enabled, 2 disabled */
++
++static UINT material_count( GLenum pname )
++{
++    switch (pname)
++    {
++    case GL_AMBIENT: case GL_DIFFUSE: case GL_SPECULAR: case GL_EMISSION: case GL_AMBIENT_AND_DIFFUSE: return 4;
++    case GL_SHININESS: return 1;
++    case GL_COLOR_INDEXES: return 3;
++    }
++    return 0;
++}
++
++static UINT light_count( GLenum pname )
++{
++    switch (pname)
++    {
++    case GL_AMBIENT: case GL_DIFFUSE: case GL_SPECULAR: case GL_POSITION: return 4;
++    case GL_SPOT_DIRECTION: return 3;
++    case GL_SPOT_EXPONENT: case GL_SPOT_CUTOFF: case GL_CONSTANT_ATTENUATION:
++    case GL_LINEAR_ATTENUATION: case GL_QUADRATIC_ATTENUATION: return 1;
++    }
++    return 0;
++}
++
++static UINT light_model_count( GLenum pname )
++{
++    switch (pname)
++    {
++    case GL_LIGHT_MODEL_AMBIENT: return 4;
++    case GL_LIGHT_MODEL_LOCAL_VIEWER: case GL_LIGHT_MODEL_TWO_SIDE: case GL_LIGHT_MODEL_COLOR_CONTROL: return 1;
++    }
++    return 0;
++}
++
++static struct gl_batch *create_batch(void)
++{
++    struct gl_batch *batch;
++
++    if (batch_state == 2) return NULL;
++    if (!batch_state)
++    {
++        char value[8];
++        if (GetEnvironmentVariableA( "WINE_GL_BATCH", value, sizeof(value) ) && value[0] == '0')
++        {
++            batch_state = 2;
++            return NULL;
++        }
++        batch_state = 1;
++    }
++    if (!(batch = calloc( 1, sizeof(*batch) ))) return NULL;
++    if (!(batch->data = malloc( BATCH_CAPACITY )))
++    {
++        free( batch );
++        return NULL;
++    }
++    NtCurrentTeb()->glReserved1[WINE_GL_RESERVED_BATCH] = batch;
++    return batch;
++}
++
++static void flush_batch( struct gl_batch *batch )
++{
++    struct wine_batch_execute_params args;
++    NTSTATUS status;
++
++    if (!batch || !batch->used) return;
++    args.teb = NtCurrentTeb();
++    args.data = batch->data;
++    args.size = batch->used;
++    batch->used = 0;
++    if ((status = WINE_UNIX_CALL( unix_wine_batch_execute, &args ))) WARN( "batch returned %#lx\n", status );
++}
++
++/* Reserve an entry for params of the given size, plus data bytes after them. */
++static inline __attribute__((always_inline)) void *batch_alloc( struct gl_batch *batch, unsigned int code, UINT size, UINT data, void **data_ptr )
++{
++    struct wine_batch_entry *entry;
++    UINT params = (size + 7) & ~7, total = sizeof(*entry) + params + ((data + 7) & ~7);
++
++    if (batch->used + total > BATCH_CAPACITY) flush_batch( batch );
++    entry = (struct wine_batch_entry *)(batch->data + batch->used);
++    entry->code = code;
++    entry->size = total;
++    batch->used += total;
++    if (data_ptr) *data_ptr = (char *)(entry + 1) + params;
++    return entry + 1;
++}
++
++#define BATCH_VALUE( f ) \
++    case unix_ ## f: \
++    { \
++        struct f ## _params *dst; \
++        if (!batch && !(batch = create_batch())) break; \
++        dst = batch_alloc( batch, code, sizeof(*dst), 0, NULL ); \
++        *dst = *(struct f ## _params *)params; \
++        return STATUS_SUCCESS; \
++    }
++
++#define BATCH_ARRAY( f, field, type, count ) \
++    case unix_ ## f: \
++    { \
++        struct f ## _params *src = params, *dst; \
++        UINT i, n = (count); \
++        type *data; \
++        if (!src->field || !n || (!batch && !(batch = create_batch()))) break; \
++        dst = batch_alloc( batch, code, sizeof(*dst), n * sizeof(type), (void **)&data ); \
++        *dst = *src; \
++        for (i = 0; i < n; i++) data[i] = src->field[i]; \
++        dst->field = data; \
++        return STATUS_SUCCESS; \
++    }
++
++NTSTATUS wine_batch_call( unsigned int code, void *params )
++{
++    struct gl_batch *batch = NtCurrentTeb()->glReserved1[WINE_GL_RESERVED_BATCH];
++
++    switch (code)
++    {
++    BATCH_VALUE( glBegin )
++    BATCH_VALUE( glEnd )
++    BATCH_VALUE( glEnable )
++    BATCH_VALUE( glDisable )
++    BATCH_VALUE( glDepthFunc )
++    BATCH_VALUE( glDepthMask )
++    BATCH_VALUE( glLineWidth )
++    BATCH_VALUE( glLineStipple )
++    BATCH_VALUE( glPointSize )
++    BATCH_VALUE( glPolygonOffset )
++    BATCH_VALUE( glPolygonMode )
++    BATCH_VALUE( glCullFace )
++    BATCH_VALUE( glFrontFace )
++    BATCH_VALUE( glShadeModel )
++    BATCH_VALUE( glHint )
++    BATCH_VALUE( glAlphaFunc )
++    BATCH_VALUE( glBlendFunc )
++    BATCH_VALUE( glColorMask )
++    BATCH_VALUE( glStencilMask )
++    BATCH_VALUE( glStencilFunc )
++    BATCH_VALUE( glStencilOp )
++    BATCH_VALUE( glColor3f )
++    BATCH_VALUE( glColor3d )
++    BATCH_VALUE( glColor3ub )
++    BATCH_VALUE( glColor4f )
++    BATCH_VALUE( glColor4d )
++    BATCH_VALUE( glColor4ub )
++    BATCH_VALUE( glVertex2f )
++    BATCH_VALUE( glVertex2d )
++    BATCH_VALUE( glVertex2i )
++    BATCH_VALUE( glVertex3f )
++    BATCH_VALUE( glVertex3d )
++    BATCH_VALUE( glVertex3i )
++    BATCH_VALUE( glNormal3f )
++    BATCH_VALUE( glNormal3d )
++    BATCH_VALUE( glTexCoord2f )
++    BATCH_VALUE( glTexCoord2d )
++    BATCH_VALUE( glEdgeFlag )
++    BATCH_VALUE( glRasterPos2f )
++    BATCH_VALUE( glRasterPos2i )
++    BATCH_VALUE( glRasterPos3f )
++    BATCH_VALUE( glRasterPos3d )
++    BATCH_VALUE( glMaterialf )
++    BATCH_VALUE( glMateriali )
++    BATCH_VALUE( glColorMaterial )
++    BATCH_VALUE( glLightf )
++    BATCH_VALUE( glLighti )
++    BATCH_VALUE( glLightModelf )
++    BATCH_VALUE( glLightModeli )
++    BATCH_VALUE( glMatrixMode )
++    BATCH_VALUE( glLoadIdentity )
++    BATCH_VALUE( glPushMatrix )
++    BATCH_VALUE( glPopMatrix )
++    BATCH_VALUE( glTranslatef )
++    BATCH_VALUE( glTranslated )
++    BATCH_VALUE( glRotatef )
++    BATCH_VALUE( glRotated )
++    BATCH_VALUE( glScalef )
++    BATCH_VALUE( glScaled )
++    BATCH_VALUE( glPushAttrib )
++    BATCH_VALUE( glPopAttrib )
++    BATCH_VALUE( glBindTexture )
++    BATCH_VALUE( glTexEnvf )
++    BATCH_VALUE( glTexEnvi )
++    BATCH_VALUE( glLoadName )
++    BATCH_VALUE( glPushName )
++    BATCH_VALUE( glPopName )
++    BATCH_VALUE( glCallList )
++    BATCH_ARRAY( glVertex3fv, v, GLfloat, 3 )
++    BATCH_ARRAY( glNormal3fv, v, GLfloat, 3 )
++    BATCH_ARRAY( glColor3fv, v, GLfloat, 3 )
++    BATCH_ARRAY( glColor4fv, v, GLfloat, 4 )
++    BATCH_ARRAY( glVertex2fv, v, GLfloat, 2 )
++    BATCH_ARRAY( glTexCoord2fv, v, GLfloat, 2 )
++    BATCH_ARRAY( glVertex3dv, v, GLdouble, 3 )
++    BATCH_ARRAY( glNormal3dv, v, GLdouble, 3 )
++    BATCH_ARRAY( glMultMatrixf, m, GLfloat, 16 )
++    BATCH_ARRAY( glMultMatrixd, m, GLdouble, 16 )
++    BATCH_ARRAY( glLoadMatrixf, m, GLfloat, 16 )
++    BATCH_ARRAY( glLoadMatrixd, m, GLdouble, 16 )
++    BATCH_ARRAY( glClipPlane, equation, GLdouble, 4 )
++    BATCH_ARRAY( glMaterialfv, params, GLfloat, material_count( src->pname ) )
++    BATCH_ARRAY( glMaterialiv, params, GLint, material_count( src->pname ) )
++    BATCH_ARRAY( glLightfv, params, GLfloat, light_count( src->pname ) )
++    BATCH_ARRAY( glLightModelfv, params, GLfloat, light_model_count( src->pname ) )
++    }
++
++    flush_batch( batch );
++    return WINE_UNIX_CALL( code, params );
++}
++
++#undef BATCH_VALUE
++#undef BATCH_ARRAY
++
++static void free_thread_batch(void)
++{
++    struct gl_batch *batch = NtCurrentTeb()->glReserved1[WINE_GL_RESERVED_BATCH];
++
++    if (!batch) return;
++    flush_batch( batch );
++    NtCurrentTeb()->glReserved1[WINE_GL_RESERVED_BATCH] = NULL;
++    free( batch->data );
++    free( batch );
++}
++
++/***********************************************************************
+  *           OpenGL initialisation routine
+  */
+ BOOL WINAPI DllMain( HINSTANCE hinst, DWORD reason, LPVOID reserved )
+@@ -3113,6 +3375,7 @@
+ #endif
+         /* fallthrough */
+     case DLL_THREAD_DETACH:
++        free_thread_batch();
+         if ((context = get_current_context())) context->base.current_tid = 0;
+         free( NtCurrentTeb()->glReserved1[WINE_GL_RESERVED_FORMATS_PTR] );
+         return TRUE;

@@ -25,13 +25,19 @@ if ! curl -s -m 3 -o /dev/null "http://127.0.0.1:20250/iframe?version=1.0&id=hea
   wine wineboot > /dev/null 2>&1
   wine net start 3DEXPERIENCELauncher > /dev/null 2>&1
 fi
-# Only opt into GDI presentation when this exact driver was installed by our builder.
+# Only use our driver's options when this exact driver was installed by our builder.
 # A later Wine update invalidates the marker and leaves normal rendering enabled.
 GL_DRIVER="$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-unix/winemac.so"
 if [[ -f "$GL_DRIVER.gdi.sha256" ]]; then
   expected="$(<"$GL_DRIVER.gdi.sha256")"
   actual="$(shasum -a 256 "$GL_DRIVER" | cut -d ' ' -f 1)"
-  if [[ "$actual" == "$expected" ]]; then export SW_OPENGL_GDI="${SW_OPENGL_GDI:-1}"; fi
+  if [[ "$actual" == "$expected" ]]; then
+    # The 3D view is drawn natively and clipped to its visible region. SW_OPENGL_GDI=1 copies each
+    # frame through GDI instead (slower; kept as a fallback).
+    export SW_OPENGL_GDI="${SW_OPENGL_GDI:-0}"
+    # This driver also matches window color spaces to Wine's sRGB images (no per-pixel conversion).
+    export SW_MAC_SRGB="${SW_MAC_SRGB:-1}"
+  fi
 fi
 # Only enable the scoped button guard for the exact matching library/prefix pair.
 BUTTON_DLL="$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/comctl32_v6.dll"

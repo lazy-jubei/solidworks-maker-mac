@@ -52,9 +52,19 @@ the installer installs MacPorts from its notarized package if it isn't there, wh
 needs an administrator password once. Python and the compilers come from Apple's
 Command Line Tools. On Apple Silicon, it also enables a Rosetta mode-switch workaround. On
 every Mac, SolidWorks is told it runs as x64 on an ARM64 host, because its license loader
-crashes under Wine on the native x64 path, Intel Macs included. An OpenGL/GDI presentation patch
-fixes viewport clipping on macOS, and a targeted mouse-capture fix lets the feature
-editor’s OK/Cancel buttons receive clicks correctly. With more than one display, windows can
+crashes under Wine on the native x64 path, Intel Macs included. A targeted mouse-capture fix
+lets the feature editor’s OK/Cancel buttons receive clicks correctly.
+
+### Graphics performance
+
+SolidWorks draws its 3D view with legacy OpenGL, one call per vertex. Under Wine on macOS
+each call crossed into the Mac side with two system calls, which took over half of every
+frame. A patched `opengl32` records simple calls and replays them in one crossing, with
+identical output. The 3D view is drawn directly by the GPU and clipped so the FeatureManager,
+task pane and toolbars stay visible; window images skip a color conversion. On an Intel Mac
+with an RX 6900 XT, rotating a large mold assembly went from about 2.5 to about 15 redraws a
+second, and a simple part from about 24 to about 70. `WINE_GL_BATCH=0` and `SW_OPENGL_GDI=1`
+switch back to the older paths if something draws wrong. With more than one display, windows can
 be dragged onto any of them, and menus and dialogs open on the display SolidWorks is on.
 
 Licensed under [LGPL-2.1-or-later](LICENSE). [Third-party notices](THIRD_PARTY_NOTICES.md).
