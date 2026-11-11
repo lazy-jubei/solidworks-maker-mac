@@ -52,6 +52,9 @@ else
 fi
 
 python3 -I "$PATCHES/comctl32-button-capture.py" "$SRC"
+# Keep PropertyManager headings from shrinking during repeated paint calls.
+grep -q sw_keep_heading_width "$SRC/dlls/comctl32_v6/button.c" \
+  || patch -s -N -d "$SRC" -p1 < "$PATCHES/comctl32-property-manager-layout.patch"
 
 export PATH="$(sw_build_path "$LLVM/bin")"
 export TMPDIR="$VOL/tmp"

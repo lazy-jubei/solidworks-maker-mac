@@ -36,6 +36,12 @@ grep -q exclude_higher_siblings "$SRC/dlls/winemac.drv/window.c" \
 # Batch the z-order lookup when several siblings can cover the viewport.
 grep -q 'sending a server request for every GW_HWNDPREV' "$SRC/dlls/winemac.drv/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-batch-clip-siblings.patch"
+# Wait for tooltip pixels before ordering the popup onto the screen.
+grep -q performPendingTooltipOrder "$SRC/dlls/winemac.drv/cocoa_window.m" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-tooltip-first-paint.patch"
+# SOLIDWORKS uses a custom window class for its status-bar warning balloon.
+grep -q swBalloonTip "$SRC/dlls/winemac.drv/window.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-balloon-first-paint.patch"
 # One PE/unix transition per batch of simple GL calls instead of one per call.
 grep -q wine_batch_execute "$SRC/dlls/opengl32/unix_thunks.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/opengl32-batch-calls.patch"

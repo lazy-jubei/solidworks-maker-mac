@@ -1,0 +1,49 @@
+--- a/dlls/comctl32_v6/button.c
++++ b/dlls/comctl32_v6/button.c
+@@ -446,6 +446,35 @@
+     }
+ }
+ 
++/* The SolidWorks PropertyManager repeatedly insets its owner-drawn headings
++ * during painting. Their actual layout is supplied by DeferWindowPos. */
++static void sw_keep_heading_width(HWND hwnd, WINDOWPOS *pos, LONG style)
++{
++    WCHAR caption[32], path[MAX_PATH], *basename;
++    HWND parent, page;
++    RECT rect;
++    int shrink;
++
++    if ((style & (WS_CHILD | BS_TYPEMASK)) != (WS_CHILD | BS_OWNERDRAW) ||
++        pos->flags || pos->hwndInsertAfter != HWND_TOPMOST ||
++        !((parent = GetParent(hwnd)) && (page = GetParent(parent))) ||
++        !GetWindowTextW(page, caption, ARRAY_SIZE(caption)) || wcscmp(caption, L"dvePage ScrollView"))
++        return;
++
++    if (!GetWindowRect(hwnd, &rect)) return;
++    MapWindowPoints(NULL, parent, (POINT *)&rect, 2);
++    shrink = rect.right - rect.left - pos->cx;
++    if (pos->x != rect.left + 4 || pos->y != rect.top ||
++        pos->cy != rect.bottom - rect.top || (shrink != 4 && shrink != 8))
++        return;
++
++    if (!GetModuleFileNameW(NULL, path, ARRAY_SIZE(path))) return;
++    basename = wcsrchr(path, '\\');
++    if (wcsicmp(basename ? basename + 1 : path, L"sldworks.exe")) return;
++
++    pos->flags |= SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE;
++}
++
+ static LRESULT CALLBACK BUTTON_WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+ {
+     BUTTON_INFO *infoPtr = (BUTTON_INFO *)GetWindowLongPtrW(hWnd, 0);
+@@ -467,6 +496,10 @@
+ 
+     switch (uMsg)
+     {
++    case WM_WINDOWPOSCHANGING:
++        sw_keep_heading_width(hWnd, (WINDOWPOS *)lParam, style);
++        return DefWindowProcW(hWnd, uMsg, wParam, lParam);
++
+     case WM_GETDLGCODE:
+         switch(btn_type)
+         {

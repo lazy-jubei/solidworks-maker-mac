@@ -13,6 +13,9 @@ for command in subprocess.check_output(['ps','-axo','comm='],text=True).splitlin
         sys.exit('Close and stop the selected Wine prefix before installing its control DLL.')
 PY
 python3 "${0:A:h}/patches/comctl32-button-capture.py" "$SRC"
+# Keep PropertyManager headings from shrinking during repeated paint calls.
+grep -q sw_keep_heading_width "$SRC/dlls/comctl32_v6/button.c" \
+  || patch -s -N -d "$SRC" -p1 < "${0:A:h}/patches/comctl32-property-manager-layout.patch"
 export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll > "$ROOT/logs/button-capture-build.log" 2>&1

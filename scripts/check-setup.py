@@ -22,11 +22,13 @@ def fixture(base):
     scripts.mkdir(parents=True)
     shutil.copy2(root / 'setup.sh', project / 'setup.sh')
     shutil.copy2(root / 'config.example.zsh', project / 'config.example.zsh')
+    shutil.copy2(root / 'scripts/install-windows-fonts.sh', scripts / 'install-windows-fonts.sh')
     volume = base / 'wine volume'
     prefix = volume / 'prefix'
     app = volume / 'Wine Staging.app'
     calls = base / 'calls'
     env = dict(os.environ, SW_SETUP_TEST_CALLS=str(calls))
+    env.pop('SW_WINDOWS_FONTS_DIR', None)
     env['SW_SETUP_TEST_SERVER'] = str(app / 'Contents/Resources/wine/bin/wineserver')
     bin_dir = base / 'bin'
     env['PATH'] = str(bin_dir) + os.pathsep + env['PATH']
@@ -51,7 +53,7 @@ def fixture(base):
                    f'if [[ "${{SW_SETUP_TEST_FAIL_STAGE:-}}" == {shlex.quote(name)} ]]; then exit 37; fi\n')
     # Preparing the prefix creates it.
     with (scripts / '03-prefix.sh').open('a') as script:
-        script.write('mkdir -p "$WINEPREFIX/drive_c"\n')
+        script.write('mkdir -p "$WINEPREFIX/drive_c/windows/Fonts"; touch "$WINEPREFIX/system.reg"\n')
     return project, prefix, calls, env, names
 
 
@@ -98,6 +100,25 @@ with TemporaryDirectory(prefix='sw-setup-check-') as directory:
     assert copied.returncode == 0 and 'Copying the prepared Wine prefix' in copied.stdout, copied.stderr
     assert calls.read_text().splitlines() == ['prerequisites', *names[:2]]
     assert (prefix / 'drive_c').is_dir() and not (prefix / '.sw-template-stamp').exists()
+    # Supplied fonts install when reusing a prepared prefix and stay out of the template.
+    calls.unlink()
+    shutil.rmtree(prefix)
+    font_source = base / 'source fonts'
+    font_source.mkdir()
+    (font_source / 'SegoeUI.TTF').write_bytes(b'regular')
+    (font_source / 'Tahoma.ttf').write_bytes(b'tahoma')
+    env['SW_WINDOWS_FONTS_DIR'] = str(font_source)
+    fonts_installed = run()
+    assert fonts_installed.returncode == 0, fonts_installed.stderr
+    assert 'Copying the prepared Wine prefix' in fonts_installed.stdout
+    assert calls.read_text().splitlines() == [
+        'prerequisites', *names[:2], 'wine:reg', 'wine:reg', 'stop:-k', 'stop:-w'
+    ]
+    fonts_rel = Path('drive_c/windows/Fonts')
+    assert (prefix / fonts_rel / 'segoeui.ttf').read_bytes() == b'regular'
+    assert (prefix / fonts_rel / 'tahoma.ttf').read_bytes() == b'tahoma'
+    assert not list((template / fonts_rel).iterdir())
+    env.pop('SW_WINDOWS_FONTS_DIR')
     # A changed setup script makes the kept prefix stale: prepare from scratch again.
     calls.unlink()
     shutil.rmtree(prefix)

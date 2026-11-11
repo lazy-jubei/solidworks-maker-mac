@@ -58,6 +58,22 @@ every Mac, SolidWorks is told it runs as x64 on an ARM64 host, because its licen
 crashes under Wine on the native x64 path, Intel Macs included. A targeted mouse-capture fix
 lets the feature editor’s OK/Cancel buttons receive clicks correctly.
 
+### Windows fonts
+
+The installer adds Microsoft Core Fonts such as Arial and Times New Roman. To
+also install Segoe UI, provide a local directory containing `segoeui.ttf`. The
+installer imports the Segoe UI styles, Segoe UI Symbol, and Tahoma faces present
+in that directory. Use font files you are licensed to install. See
+[Microsoft’s font information](https://learn.microsoft.com/en-us/typography/font-list/segoe-ui).
+
+Set `SW_WINDOWS_FONTS_DIR` in `config.local.zsh` or export it in Terminal before
+running the installer. For an existing installation, run the following from the
+checkout with the Wine image mounted, then reopen SolidWorks.
+
+```sh
+zsh scripts/install-windows-fonts.sh '/path/to/fonts'
+```
+
 ### Graphics performance
 
 SolidWorks draws its 3D view with legacy OpenGL, one call per vertex. Under Wine on macOS

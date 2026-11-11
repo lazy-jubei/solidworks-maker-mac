@@ -6,3 +6,5 @@ export SW_REGISTRY='https://eu1-makers-registry.3dexperience.3ds.com'
 # export SW_IMAGE='/path/to/swwine.sparsebundle'
 # export SW_VOL='/Volumes/SWWine'
 # export SW_PREFIX='/Volumes/SWWine/prefix-11.16'
+# Optional: install locally supplied Windows fonts when preparing a prefix.
+# export SW_WINDOWS_FONTS_DIR='/path/to/directory/with/segoeui.ttf'

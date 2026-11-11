@@ -25,6 +25,19 @@ if [[ ! -f "$RES/bin/wineserver.stock" ]]; then
   python3 -I "${0:A:h}/patches/wineserver-wakeup-epipe.py" "$RES/bin/wineserver.stock" "$RES/bin/wineserver"
   codesign -s - -f "$RES/bin/wineserver"
 fi
+
+# Keep the Staging protocol and stop enumeration of unlinked windows on teardown.
+server_candidate="$(mktemp "$RES/bin/wineserver.XXXXXXXX")"
+trap '/bin/rm -- "$server_candidate"' EXIT
+python3 -I "${0:A:h}/patches/wineserver-window-list.py" "$RES/bin/wineserver" "$server_candidate"
+if ! cmp -s "$RES/bin/wineserver" "$server_candidate"; then
+  codesign -s - -f "$server_candidate"
+  codesign --verify --strict "$server_candidate"
+  mv -f "$server_candidate" "$RES/bin/wineserver"
+else
+  /bin/rm -- "$server_candidate"
+fi
+trap - EXIT
 [[ -x "$VOL/bin/winetricks" ]] || { curl --proto '=https' -fL -o "$VOL/bin/winetricks" "$WINETRICKS_URL"; chmod +x "$VOL/bin/winetricks"; }
 wine --version
 winetricks --version

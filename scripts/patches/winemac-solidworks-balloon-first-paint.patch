@@ -1,0 +1,124 @@
+--- a/dlls/winemac.drv/cocoa_window.h
++++ b/dlls/winemac.drv/cocoa_window.h
+@@ -38,6 +38,8 @@
+     BOOL pendingOrderOut;
+     void (^pendingTooltipOrder)(void);
+     NSUInteger tooltipOrderGeneration;
++    unsigned int tooltipPaintSettleMs;
++    BOOL tooltipPaintOrderScheduled;
+     BOOL savedVisibleState;
+     BOOL drawnSinceShown;
+     BOOL closing;
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -1922,9 +1922,31 @@
+         [order release];
+     }
+ 
++    - (void) tooltipSurfaceUpdated
++    {
++        if (!pendingTooltipOrder || tooltipPaintOrderScheduled) return;
++        if (!tooltipPaintSettleMs)
++        {
++            [self performPendingTooltipOrder];
++            return;
++        }
++
++        /* A SOLIDWORKS balloon can flush its background before its text.
++         * Let the later GDI update reach the view before ordering the window. */
++        tooltipPaintOrderScheduled = YES;
++        NSUInteger generation = tooltipOrderGeneration;
++        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, tooltipPaintSettleMs * NSEC_PER_MSEC),
++                       dispatch_get_main_queue(), ^{
++            if (tooltipOrderGeneration == generation) [self performPendingTooltipOrder];
++        });
++    }
++
+     - (void) orderTooltipBelow:(WineWindow*)prev orAbove:(WineWindow*)next
++                  paintSettleMs:(unsigned int)paintSettleMs
+     {
+         NSUInteger generation = ++tooltipOrderGeneration;
++        tooltipPaintSettleMs = paintSettleMs;
++        tooltipPaintOrderScheduled = NO;
+         [pendingTooltipOrder release];
+         pendingTooltipOrder = [^{
+             [self orderBelow:prev orAbove:next activate:NO];
+@@ -3578,7 +3600,7 @@
+  * front.
+  */
+ void macdrv_order_cocoa_window(macdrv_window w, macdrv_window p,
+-        macdrv_window n, bool activate, bool wait_for_paint)
++        macdrv_window n, bool activate, bool wait_for_paint, unsigned int paint_settle_ms)
+ {
+     WineWindow* window = (WineWindow*)w;
+     WineWindow* prev = (WineWindow*)p;
+@@ -3586,7 +3608,7 @@
+ 
+     OnMainThreadAsync(^{
+         if (wait_for_paint && ![window isVisible])
+-            [window orderTooltipBelow:prev orAbove:next];
++            [window orderTooltipBelow:prev orAbove:next paintSettleMs:paint_settle_ms];
+         else
+             [window orderBelow:prev orAbove:next activate:activate];
+     });
+@@ -3678,7 +3700,7 @@
+         [view setColorImage:image];
+         [view setSurfaceRect:cgrect_mac_from_win(rect)];
+         [view setNeedsDisplayInRect:NSRectFromCGRect(cgrect_mac_from_win(dirty))];
+-        [window performPendingTooltipOrder];
++        [window tooltipSurfaceUpdated];
+ 
+         CGImageRelease(image);
+     });
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -503,7 +503,7 @@
+ extern void macdrv_set_cocoa_window_title(macdrv_window w, const UniChar* title,
+         size_t length);
+ extern void macdrv_order_cocoa_window(macdrv_window w, macdrv_window prev,
+-        macdrv_window next, bool activate, bool wait_for_paint);
++        macdrv_window next, bool activate, bool wait_for_paint, unsigned int paint_settle_ms);
+ extern void macdrv_hide_cocoa_window(macdrv_window w);
+ extern void macdrv_set_cocoa_window_frame(macdrv_window w, const CGRect* new_frame);
+ extern void macdrv_get_cocoa_window_frame(macdrv_window w, CGRect* out_frame);
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -637,16 +637,25 @@
+ /***********************************************************************
+  *              show_window
+  */
+-static BOOL is_tooltip_window(HWND hwnd)
++static BOOL get_tooltip_paint_delay(HWND hwnd, unsigned int *settle_ms)
+ {
+     WCHAR buffer[32];
+     UNICODE_STRING name = {0, sizeof(buffer), buffer};
+ 
+-    return NtUserGetClassName(hwnd, FALSE, &name) && !wcsicmp(buffer, u"tooltips_class32");
++    *settle_ms = 0;
++    if (!NtUserGetClassName(hwnd, FALSE, &name)) return FALSE;
++    if (!wcsicmp(buffer, u"swBalloonTip"))
++    {
++        *settle_ms = 40;
++        return TRUE;
++    }
++    return !wcsicmp(buffer, u"tooltips_class32");
+ }
+ 
+ static void show_window(struct macdrv_win_data *data)
+ {
++    unsigned int settle_ms = 0;
++    BOOL wait_for_paint;
+     HWND prev = NULL;
+     HWND next = NULL;
+     macdrv_window prev_window = NULL;
+@@ -673,8 +682,9 @@
+ 
+     if (!prev_window)
+         activate = activate_on_focus_time && (NtGetTickCount() - activate_on_focus_time < 2000);
++    wait_for_paint = !activate && get_tooltip_paint_delay(data->hwnd, &settle_ms);
+     macdrv_order_cocoa_window(data->cocoa_window, prev_window, next_window, activate,
+-                             !activate && is_tooltip_window(data->hwnd));
++                             wait_for_paint, settle_ms);
+     data->on_screen = TRUE;
+ 
+     info.cbSize = sizeof(info);
