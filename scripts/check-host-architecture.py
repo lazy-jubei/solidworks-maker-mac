@@ -68,6 +68,6 @@ with TemporaryDirectory(prefix='sw-host-check-') as temporary:
         launch = subprocess.run(['zsh', str(scripts / 'run-solidworks.sh')], env=env,
                                 capture_output=True, text=True)
         assert launch.returncode == 0, launch.stderr
-        assert result_file.read_text().strip() == ('1' if host == 'arm64' else 'unset')
+        assert result_file.read_text().strip() == '1'
 
-print('Passed: physical Apple Silicon, Intel and missing ARM sysctl; Rosetta-only patch selection and launch host reporting, including inherited-flag cleanup. No Wine or CAD executed.')
+print('Passed: physical Apple Silicon, Intel and missing ARM sysctl; Rosetta-only patch selection and ARM64 host reporting at launch on every host. No Wine or CAD executed.')

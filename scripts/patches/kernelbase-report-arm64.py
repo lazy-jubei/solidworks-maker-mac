@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Let IsWow64Process2 report the real ARM64 machine in Wine 11.16's dlls/kernelbase.
 
-Under Rosetta, Wine reports native x64. JS0GROUP.dll has code that only continues for x64 on ARM64
-(RVA 0x85b80), which is what an Apple Silicon Mac is. Only active when SW_REPORT_ARM64 is set.
+Wine reports native x64. JS0GROUP.dll's native-x64 path crashes under Wine, on Intel Macs too;
+its x64-on-ARM64 path (RVA 0x85b80) starts normally. Only active when SW_REPORT_ARM64 is set,
+which run-solidworks.sh does on every Mac.
 
 Usage: kernelbase-report-arm64.py <wine source dir>
 """

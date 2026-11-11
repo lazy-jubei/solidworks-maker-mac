@@ -50,8 +50,9 @@ Wine 11.16 is patched to support the installer’s ZIP extraction and MSI featur
 selection. bison and cabextract come from MacPorts, on Intel and Apple Silicon Macs;
 the installer installs MacPorts from its notarized package if it isn't there, which
 needs an administrator password once. Python and the compilers come from Apple's
-Command Line Tools. On Apple Silicon, it also enables a Rosetta mode-switch workaround and
-corrects ARM64 host reporting during startup. An OpenGL/GDI presentation patch
+Command Line Tools. On Apple Silicon, it also enables a Rosetta mode-switch workaround. On
+every Mac, SolidWorks is told it runs as x64 on an ARM64 host, because its license loader
+crashes under Wine on the native x64 path, Intel Macs included. An OpenGL/GDI presentation patch
 fixes viewport clipping on macOS, and a targeted mouse-capture fix lets the feature
 editor’s OK/Cancel buttons receive clicks correctly. With more than one display, windows can
 be dragged onto any of them, and menus and dialogs open on the display SolidWorks is on.
