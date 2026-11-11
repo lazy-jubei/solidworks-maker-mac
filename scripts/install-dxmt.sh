@@ -12,7 +12,7 @@ for line in subprocess.check_output(['ps','-axo','comm='],text=True).splitlines(
 PY
 mkdir -p "$CACHE/dxmt"
 ARCHIVE="$CACHE/dxmt/dxmt-v0.80-builtin.tar.gz"
-[[ -f "$ARCHIVE" ]] || curl -fL -o "$ARCHIVE" https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz
+[[ -f "$ARCHIVE" ]] || curl --proto '=https' -fL -o "$ARCHIVE" https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz
 print "8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d  $ARCHIVE" | shasum -a 256 -c -
 # The archive already holds a top-level v0.80/ folder.
 rm -rf "$CACHE/dxmt/v0.80"

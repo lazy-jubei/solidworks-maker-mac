@@ -12,7 +12,7 @@ install_root="${SW_INSTALL_DIR:-$HOME/SolidWorksMakerMac}"
 # Download into a private temporary directory; preserve any existing installation.
 work="$(mktemp -d /private/tmp/solidworks-maker.XXXXXX)"
 trap 'rm -rf -- "$work"' EXIT
-curl -fL --retry 3 https://github.com/lazy-jubei/solidworks-maker-mac/archive/refs/heads/main.tar.gz -o "$work/project.tar.gz"
+curl --proto '=https' -fL --retry 3 https://github.com/lazy-jubei/solidworks-maker-mac/archive/refs/heads/main.tar.gz -o "$work/project.tar.gz"
 tar -xzf "$work/project.tar.gz" -C "$work"
 mkdir -p "${install_root:h}"
 # Atomic directory creation refuses a competing or existing installation.

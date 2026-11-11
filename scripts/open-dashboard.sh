@@ -22,7 +22,7 @@ ZIP="$D/chrome-$CFT_PLATFORM.zip"
 APP="$D/chrome-$CFT_PLATFORM/Google Chrome for Testing.app"
 UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36'
 mkdir -p "$D"
-[[ -f "$ZIP" ]] || curl -fL -o "$ZIP" "https://storage.googleapis.com/chrome-for-testing-public/$CFT_VERSION/$CFT_PLATFORM/chrome-$CFT_PLATFORM.zip"
+[[ -f "$ZIP" ]] || curl --proto '=https' -fL -o "$ZIP" "https://storage.googleapis.com/chrome-for-testing-public/$CFT_VERSION/$CFT_PLATFORM/chrome-$CFT_PLATFORM.zip"
 if [[ ! -d "$APP" ]]; then
   ( cd "$D" && ditto -xk "$ZIP" . )
   xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true

@@ -4,7 +4,7 @@
 set -eu
 source "${0:A:h}/env.sh"
 INST="$CACHE/installers/MicrosoftEdgeWebview2Setup.exe"
-[[ -f "$INST" ]] || curl -fL -o "$INST" "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+[[ -f "$INST" ]] || curl --proto '=https' -fL -o "$INST" "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
 shasum -a 256 "$INST"
 
 # Remove only the old per-host policy created by earlier versions of this script.

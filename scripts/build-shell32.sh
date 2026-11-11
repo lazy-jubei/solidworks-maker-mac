@@ -17,14 +17,14 @@ TAR="$CACHE/wine-$WINE_VERSION.tar.xz"
 TAR_SHA="c66e2090343dcd727f7f7fd2f87ee0bfb0b118790c1d745ab7b8a4c3a4197f2f"
 mkdir -p "$BUILD" "$ROOT/logs"
 
-[[ -f "$TAR" ]] || curl -fL -o "$TAR" "https://dl.winehq.org/wine/source/11.x/wine-$WINE_VERSION.tar.xz"
+[[ -f "$TAR" ]] || curl --proto '=https' -fL -o "$TAR" "https://dl.winehq.org/wine/source/11.x/wine-$WINE_VERSION.tar.xz"
 echo "$TAR_SHA  $TAR" | shasum -a 256 -c -
 
 LLVM="$BUILD/llvm-mingw"
 if [[ ! -x "$LLVM/bin/x86_64-w64-mingw32-clang" ]]; then
   LLVM_TAG="20261020"
   asset="llvm-mingw-$LLVM_TAG-ucrt-macos-universal.tar.xz"
-  [[ -f "$CACHE/$asset" ]] || curl -fL -o "$CACHE/$asset" "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_TAG/$asset"
+  [[ -f "$CACHE/$asset" ]] || curl --proto '=https' -fL -o "$CACHE/$asset" "https://github.com/mstorsjo/llvm-mingw/releases/download/$LLVM_TAG/$asset"
   tar -xJf "$CACHE/$asset" -C "$BUILD"
   mv "$BUILD/llvm-mingw-$LLVM_TAG-ucrt-macos-universal" "$LLVM"
   echo "llvm-mingw $LLVM_TAG"

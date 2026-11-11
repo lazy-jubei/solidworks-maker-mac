@@ -4,7 +4,7 @@ set -eu
 source "${0:A:h}/env.sh"
 python3 "${0:A:h}/tools/require-stopped.py" "$WINE_APP/Contents/Resources/wine/bin/wineserver"
 TAR="$CACHE/${WINE_URL:t}"
-[[ -f "$TAR" ]] || { curl -fL -o "$TAR.part" "$WINE_URL"; mv "$TAR.part" "$TAR"; }
+[[ -f "$TAR" ]] || { curl --proto '=https' -fL -o "$TAR.part" "$WINE_URL"; mv "$TAR.part" "$TAR"; }
 shasum -a 256 "$TAR" | tee "$CACHE/${WINE_URL:t}.sha256"
 if [[ ! -d "$WINE_APP" ]]; then
   mkdir -p "${WINE_APP:h}"
@@ -25,6 +25,6 @@ if [[ ! -f "$RES/bin/wineserver.stock" ]]; then
   python3 -I "${0:A:h}/patches/wineserver-wakeup-epipe.py" "$RES/bin/wineserver.stock" "$RES/bin/wineserver"
   codesign -s - -f "$RES/bin/wineserver"
 fi
-[[ -x "$VOL/bin/winetricks" ]] || { curl -fL -o "$VOL/bin/winetricks" "$WINETRICKS_URL"; chmod +x "$VOL/bin/winetricks"; }
+[[ -x "$VOL/bin/winetricks" ]] || { curl --proto '=https' -fL -o "$VOL/bin/winetricks" "$WINETRICKS_URL"; chmod +x "$VOL/bin/winetricks"; }
 wine --version
 winetricks --version
