@@ -6,12 +6,17 @@ python3 - "${1:-}" "${0:A:h}" <<'PY'
 from pathlib import Path
 import plistlib
 import shlex
+import subprocess
 import sys
+from tempfile import TemporaryDirectory
 fresh = sys.argv[1] == '--test'
 scripts = Path(sys.argv[2]).resolve()
 project = scripts.parent
 name = 'SolidWorks Fresh (Wine)' if fresh else 'SolidWorks (Wine)'
-app = Path.home() / 'Applications' / (name + '.app')
+destination = Path.home() / 'Applications' / (name + '.app')
+destination.parent.mkdir(parents=True, exist_ok=True)
+staging = TemporaryDirectory(prefix='.solidworks-launcher-', dir=destination.parent)
+app = Path(staging.name) / destination.name
 mac = app / 'Contents/MacOS'
 mac.mkdir(parents=True, exist_ok=True)
 runtime = app / 'Contents/Resources/runtime'
@@ -28,7 +33,7 @@ exec >> "$HOME/Library/Logs/SolidWorksWine/@LOG@-launcher.log" 2>&1
 print -r -- "$(/bin/date -u '+%Y-%m-%dT%H:%M:%SZ') Starting SolidWorks @LOG@ launcher"
 unset SW_VOL SW_PREFIX SW_IMAGE SW_BUILD SW_GRAPHICS SW_VIEWPORT_FIX SW_OPENGL_GDI SW_BUTTON_CAPTURE_GUARD SW_PROJECT_ROOT SW_LOG_DIR
 unset WINEDLLOVERRIDES SW_REPORT_STANDARD_INTEGRITY WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS WINE_D3D_CONFIG
-export SW_PROJECT_ROOT="${0:A:h:h}/Resources/runtime"
+export SW_PROJECT_ROOT="${0:A:h}/runtime"
 export SW_CONFIG_FILE=@CONFIG@
 export SW_IMAGE=@MAIN_IMAGE@
 _sw_launcher_image_default=@IMAGE@
@@ -64,16 +69,29 @@ if [[ "${IMAGE:A}" == "${_sw_launcher_main_image:A}" || "$IMAGE" -ef "$_sw_launc
 fi
 '''
 code = code.replace('@FRESH@', fresh_config if fresh else '')
-launch = mac/'launch'
-launch.write_text(code)
-launch.chmod(0o755)
+(app/'Contents/Resources/launch.sh').write_text(code)
+subprocess.run(['/usr/bin/xcrun', 'swiftc', '-O', str(scripts/'tools/MacLauncher.swift'),
+                '-o', str(mac/'launch')], check=True)
 with (app/'Contents/Info.plist').open('wb') as out:
     plistlib.dump({'CFBundleExecutable':'launch',
                   'CFBundleIdentifier':'local.solidworks-wine.launcher'+('.fresh' if fresh else ''),
                   'CFBundleName':name, 'CFBundleDisplayName':name,
-                  'CFBundlePackageType':'APPL', 'CFBundleVersion':'2',
-                  'CFBundleShortVersionString':'0.1.1', 'LSMinimumSystemVersion':'10.15',
+                  'CFBundlePackageType':'APPL', 'CFBundleVersion':'3',
+                  'CFBundleShortVersionString':'0.1.2', 'LSMinimumSystemVersion':'10.15',
+                  'NSDocumentsFolderUsageDescription':'SOLIDWORKS uses your Documents folder for models and templates.',
                   'NSNetworkVolumesUsageDescription':'SOLIDWORKS needs access to its Windows disk image.',
                   'NSRemovableVolumesUsageDescription':'SOLIDWORKS runs from its mounted Windows disk image.'},out)
-print(app)
+subprocess.run(['/usr/bin/codesign', '--force', '--sign', '-', str(app)], check=True)
+subprocess.run(['/usr/bin/codesign', '--verify', '--strict', str(app)], check=True)
+previous = Path(staging.name) / 'previous.app'
+if destination.exists():
+    destination.rename(previous)
+try:
+    app.rename(destination)
+except OSError:
+    if previous.exists():
+        previous.rename(destination)
+    raise
+staging.cleanup()
+print(destination)
 PY

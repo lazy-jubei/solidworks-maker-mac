@@ -16,6 +16,8 @@ with TemporaryDirectory(prefix='sw-single-launch-') as directory:
     for name in ['launch-once.py']:
         shutil.copy2(root / 'scripts/tools' / name, tools / name)
     (tools / 'signin-monitor.py').write_text('# No live monitor in this fixture.\n')
+    probe_path = tools / 'ExistingCad.exe'
+    probe_path.write_bytes(b'MZ')
     fakebin = base / 'bin'
     fakebin.mkdir()
     probe = fakebin / 'wine'
@@ -35,6 +37,11 @@ with TemporaryDirectory(prefix='sw-single-launch-') as directory:
     env = dict(os.environ, PATH=str(fakebin) + os.pathsep + os.environ['PATH'],
                WINEPREFIX=str(prefix), SINGLE_TEST_CALLS=str(calls), SINGLE_TEST_STATUS='0')
     command = [sys.executable, str(tools / 'launch-once.py'), str(tools), str(runner)]
+    probe_path.unlink()
+    unreadable = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
+    assert unreadable.returncode != 0 and 'Could not read the CAD session probe' in unreadable.stderr
+    assert not calls.exists()
+    probe_path.write_bytes(b'MZ')
     existing = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
     assert existing.returncode == 0 and calls.read_text().splitlines() == ['probe']
     calls.unlink()

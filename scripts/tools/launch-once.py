@@ -16,8 +16,17 @@ def launch(tools, runner):
         except BlockingIOError:
             print('SOLIDWORKS launch is already in progress.', flush=True)
             return 0
+        probe_path = tools / 'ExistingCad.exe'
+        # macOS may ask for disk-image access on the first read. Keep that
+        # prompt outside the Wine probe's timeout so a first launch can finish.
         try:
-            probe = subprocess.run(['wine', str(tools / 'ExistingCad.exe'), '--activate'], timeout=30)
+            with probe_path.open('rb') as executable:
+                if not executable.read(1):
+                    sys.exit(f'Empty CAD session probe: {probe_path}')
+        except OSError as exc:
+            sys.exit(f'Could not read the CAD session probe: {exc}')
+        try:
+            probe = subprocess.run(['wine', str(probe_path), '--activate'], timeout=30)
         except subprocess.TimeoutExpired:
             sys.exit('Could not check the existing CAD session; refusing a duplicate launch.')
         if probe.returncode == 0:

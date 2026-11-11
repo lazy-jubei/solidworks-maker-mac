@@ -6,6 +6,7 @@ from unittest.mock import patch
 import contextlib
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,8 @@ with TemporaryDirectory(prefix='sw-launcher-config-') as temporary:
     temporary=Path(temporary).resolve()
     project=temporary/'checkout with spaces'
     scripts=project/'scripts'
-    for name in ('env.sh','run-solidworks.sh','10-fresh-signin.sh','tools/signin-monitor.py','tools/launch-once.py'):
+    for name in ('env.sh','run-solidworks.sh','10-fresh-signin.sh','tools/signin-monitor.py','tools/launch-once.py',
+                 'tools/MacLauncher.swift'):
         target=scripts/name;target.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(root/'scripts'/name,target)
     main_volume=temporary/'main volume'
@@ -34,10 +36,24 @@ with TemporaryDirectory(prefix='sw-launcher-config-') as temporary:
         with patch('pathlib.Path.home',return_value=temporary/'home'),patch.object(sys,'argv',['builder',mode,str(scripts)]),contextlib.redirect_stdout(io.StringIO()) as output:
             exec(compile(code,str(builder),'exec'),{'__name__':'__main__'})
         app=Path(output.getvalue().strip());apps[mode]=app
-        subprocess.run(['zsh','-n',str(app/'Contents/MacOS/launch')],check=True)
+        subprocess.run(['zsh','-n',str(app/'Contents/Resources/launch.sh')],check=True)
+
+    # Run the native entry point through the generated script without launching Wine.
+    wine=main_volume/'wine-staging-11.16/Wine Staging.app/Contents/Resources/wine/bin/wine'
+    wine.parent.mkdir(parents=True)
+    wine.write_text('#!/bin/zsh\nexit 99\n')
+    wine.chmod(0o755)
+    runtime_entry=apps['']/'Contents/Resources/runtime/scripts/10-fresh-signin.sh'
+    runtime_entry.write_text('#!/bin/zsh\nprint "Reached launcher runtime"\nexit 17\n')
+    fixture_home=temporary/'home'
+    subprocess.run(['/usr/bin/codesign','--force','--sign','-',str(apps[''])],check=True)
+    native=subprocess.run([str(apps['']/'Contents/MacOS/launch')],
+                          env=dict(os.environ,HOME=str(fixture_home)),timeout=10)
+    assert native.returncode==17,native.returncode
+    assert 'Reached launcher runtime' in (fixture_home/'Library/Logs/SolidWorksWine/main-launcher.log').read_text()
 
     def inspect(mode):
-        launch=apps[mode]/'Contents/MacOS/launch'
+        launch=apps[mode]/'Contents/Resources/launch.sh'
         text=launch.read_text()
         # Execute only the generated configuration code, before mount/launch/logging.
         body=text[text.index('unset SW_VOL'):text.index('if [[ ! -d "$VOL" ]]')]

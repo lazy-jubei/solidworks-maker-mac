@@ -37,6 +37,9 @@ already installed. Downloads and the prepared Wine are kept, so a reinstall take
 minutes. To run it again: `zsh ~/SolidWorksMakerMac/scripts/install-guided.sh`.
 
 After setup, open **SolidWorks (Wine)** in your Applications folder.
+On first launch, macOS may ask for access to the mounted Wine disk image and, if
+the image is on a share, to network volumes. SolidWorks may also ask to access
+folders that Wine maps to your Mac, such as Documents.
 
 ## Details
 
