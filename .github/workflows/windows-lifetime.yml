@@ -1,0 +1,58 @@
+name: Windows window lifetime comparison
+on:
+  push:
+    branches: [codex/cef-window-lifetime-windows]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-windows:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native Win32 probes
+        shell: pwsh
+        run: |
+          @'
+          #define UNICODE
+          #define _UNICODE
+          #include <windows.h>
+          #include <stdio.h>
+          static HWND parent,child;
+          static LONG destroys,ncdestroys;
+          static DWORD worker_tid;
+          static LRESULT CALLBACK child_proc(HWND w,UINT m,WPARAM a,LPARAM b){if(m==WM_DESTROY)InterlockedIncrement(&destroys);if(m==WM_NCDESTROY)InterlockedIncrement(&ncdestroys);return DefWindowProcW(w,m,a,b);}
+          static LRESULT CALLBACK parent_proc(HWND w,UINT m,WPARAM a,LPARAM b){if(m==WM_APP+1){BOOL ok=DestroyWindow(w);printf("PARENT destroyed=%d child_valid_at_return=%d nc=%ld\n",ok,IsWindow(child),ncdestroys);fflush(stdout);return ok;}return DefWindowProcW(w,m,a,b);}
+          static DWORD WINAPI worker(void *unused){worker_tid=GetCurrentThreadId();child=CreateWindowExW(0,L"CrossChild",L"",WS_CHILD,0,0,100,100,parent,NULL,GetModuleHandleW(NULL),NULL);if(!child){printf("Child creation failed %lu\n",GetLastError());return 2;}SendMessageW(parent,WM_APP+1,0,0);BOOL valid=IsWindow(child);printf("AFTER_SYNC_SEND child_valid=%d destroys=%ld nc=%ld\n",valid,destroys,ncdestroys);HWND leaf=CreateWindowExW(0,L"CrossLeaf",L"",WS_CHILD,0,0,10,10,child,NULL,GetModuleHandleW(NULL),NULL);DWORD error=GetLastError();printf("INITIALIZATION child_valid=%d leaf_created=%d error=%lu\n",IsWindow(child),leaf!=NULL,error);DWORD start=GetTickCount();MSG msg;while(GetTickCount()-start<200){while(PeekMessageW(&msg,NULL,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}Sleep(1);}printf("AFTER_PUMP child_valid=%d leaf_valid=%d destroys=%ld nc=%ld\n",IsWindow(child),leaf?IsWindow(leaf):0,destroys,ncdestroys);fflush(stdout);if(leaf&&IsWindow(leaf))DestroyWindow(leaf);if(IsWindow(child))DestroyWindow(child);return valid&&leaf?0:1;}
+          int main(void){WNDCLASSW wc={0};wc.hInstance=GetModuleHandleW(NULL);wc.lpfnWndProc=parent_proc;wc.lpszClassName=L"CrossParent";RegisterClassW(&wc);wc.lpfnWndProc=child_proc;wc.lpszClassName=L"CrossChild";RegisterClassW(&wc);wc.lpfnWndProc=DefWindowProcW;wc.lpszClassName=L"CrossLeaf";RegisterClassW(&wc);int failures=0;for(int i=0;i<5;i++){destroys=ncdestroys=0;parent=CreateWindowExW(0,L"CrossParent",L"",WS_OVERLAPPED,0,0,100,100,NULL,NULL,wc.hInstance,NULL);HANDLE thread=CreateThread(NULL,0,worker,NULL,0,NULL);if(!thread||!parent)return 3;DWORD start=GetTickCount();while(WaitForSingleObject(thread,0)==WAIT_TIMEOUT&&GetTickCount()-start<10000){MSG msg;while(PeekMessageW(&msg,NULL,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}MsgWaitForMultipleObjects(1,&thread,FALSE,10,QS_ALLINPUT);}DWORD code=999;GetExitCodeThread(thread,&code);printf("CYCLE=%d worker_exit=%lu\n",i+1,code);if(code)failures++;CloseHandle(thread);if(IsWindow(parent))DestroyWindow(parent);}printf("FAILURES=%d\n",failures);return failures?1:0;}
+          '@ | Set-Content -Encoding utf8 cross-thread.c
+          @'
+          #define UNICODE
+          #define _UNICODE
+          #include <windows.h>
+          #include <stdio.h>
+          static UINT trigger;static int destroyed;
+          static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){if(m==trigger&&!(m==WM_SHOWWINDOW&&!w)){destroyed++;DestroyWindow(h);return 0;}return DefWindowProcW(h,m,w,l);}
+          int main(void){WNDCLASSW c={0};c.hInstance=GetModuleHandleW(NULL);c.lpfnWndProc=proc;c.lpszClassName=L"CreateReturnValidity";RegisterClassW(&c);HWND parent=CreateWindowExW(0,L"static",L"",WS_POPUP,0,0,200,200,NULL,NULL,c.hInstance,NULL);UINT tests[]={WM_CREATE,WM_SIZE,WM_MOVE,WM_SHOWWINDOW};int invalid=0;for(unsigned i=0;i<sizeof(tests)/sizeof(tests[0]);i++){trigger=tests[i];destroyed=0;SetLastError(0);HWND h=CreateWindowExW(0,c.lpszClassName,L"",WS_CHILD|WS_VISIBLE,0,0,100,100,parent,NULL,c.hInstance,NULL);DWORD error=GetLastError();BOOL valid=h&&IsWindow(h);printf("trigger=%x destroyed=%d returned=%p valid=%d error=%lu\n",trigger,destroyed,h,valid,error);if(h&&!valid)invalid++;if(valid)DestroyWindow(h);}DestroyWindow(parent);printf("INVALID_RETURNS=%d\n",invalid);return invalid?1:0;}
+          '@ | Set-Content -Encoding utf8 create-validity.c
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $install) { throw "MSVC installation unavailable" }
+          $build = "call `"$install\Common7\Tools\VsDevCmd.bat`" -arch=x64 >nul && cl /nologo /std:c17 /W3 cross-thread.c /Fe:cross-thread.exe /link user32.lib && cl /nologo /std:c17 /W3 create-validity.c /Fe:create-validity.exe /link user32.lib"
+          & cmd.exe /d /s /c $build
+          if ($LASTEXITCODE -ne 0) { throw "Probe compilation failed: $LASTEXITCODE" }
+      - name: Observe native Windows behavior
+        shell: pwsh
+        run: |
+          & .\cross-thread.exe 2>&1 | Tee-Object cross-thread.log
+          Write-Host "CROSS_THREAD_EXIT=$LASTEXITCODE"
+          & .\create-validity.exe 2>&1 | Tee-Object create-validity.log
+          Write-Host "CREATE_VALIDITY_EXIT=$LASTEXITCODE"
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-windows-lifetime
+          path: "*.log"
+          retention-days: 7
