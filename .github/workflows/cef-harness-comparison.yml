@@ -28,9 +28,14 @@ jobs:
           if ($h -ne $sha1) { throw "CEF archive checksum mismatch: $h" }
           tar -xf cef.tar.bz2
           $root = (Get-ChildItem -Directory -Filter "cef_binary_147.0.9*_windows64" | Select-Object -First 1).FullName
+          # Official packages keep Resources/ (locales, icudtl.dat, *.pak) apart from Release/;
+          # the harness uses one runtime directory, so merge them the way a CEF distribution ships.
+          Copy-Item -Path "$root\Resources\*" -Destination "$root\Release\" -Recurse -Force
           "CEF_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
           (Get-FileHash "$root\Release\libcef.dll" -Algorithm SHA256).Hash.ToLower() | Tee-Object libcef-sha256.txt
-          Test-Path "$root\Release\locales\en-US.pak" | Tee-Object -Append libcef-sha256.txt
+          foreach ($p in @("locales\en-US.pak", "icudtl.dat", "resources.pak", "chrome_elf.dll")) {
+            "$p=$(Test-Path "$root\Release\$p")" | Tee-Object -Append libcef-sha256.txt
+          }
 
       - name: Build the Wine harness source with MSVC
         shell: pwsh
@@ -336,15 +341,31 @@ jobs:
         shell: pwsh
         run: |
           $env:CEF_TEST_RUNTIME = Join-Path $env:CEF_ROOT "Release"
-          & .\CefWindowCreateHarness.exe --version-only 2>&1 | Tee-Object native-version.log
+          # Headless error mode: no modal WER dialog blocking the job.
+          $env:CEF_TEST_HEADLESS = "1"
+
+          function Run-Harness {
+            param([string]$Arguments, [string]$OutFile, [int]$TimeoutSec)
+            $errFile = "$OutFile.err"
+            $proc = Start-Process -FilePath ".\CefWindowCreateHarness.exe" -ArgumentList $Arguments `
+              -NoNewWindow -PassThru -RedirectStandardOutput $OutFile -RedirectStandardError $errFile
+            if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+              "TIMEOUT_SEC=$TimeoutSec pid=$($proc.Id)" | Tee-Object -Append $OutFile
+              "KILLED=1" | Tee-Object -Append $OutFile
+            }
+            "EXIT=$($proc.ExitCode)" | Tee-Object -Append $OutFile
+            Get-Process -Name CefWindowCreateHarness -ErrorAction SilentlyContinue | Stop-Process -Force
+            Get-Process -Name chrome_crashpad_handler -ErrorAction SilentlyContinue | Stop-Process -Force
+            Start-Sleep -Seconds 2
+          }
+
+          Run-Harness -Arguments "--version-only" -OutFile "native-version.log" -TimeoutSec 60
           $env:CEF_TEST_CACHE = Join-Path $env:RUNNER_TEMP "cef-cache-control"
           $env:CEF_TEST_LOG = Join-Path $env:GITHUB_WORKSPACE "cef-harness-native-control.log"
-          & .\CefWindowCreateHarness.exe 2>&1 | Tee-Object native-control.log
-          "CONTROL_EXIT=$LASTEXITCODE" | Tee-Object -Append native-control.log
+          Run-Harness -Arguments "" -OutFile "native-control.log" -TimeoutSec 180
           $env:CEF_TEST_CACHE = Join-Path $env:RUNNER_TEMP "cef-cache-destroy"
           $env:CEF_TEST_LOG = Join-Path $env:GITHUB_WORKSPACE "cef-harness-native-destroy.log"
-          & .\CefWindowCreateHarness.exe --destroy-before-widget 2>&1 | Tee-Object native-destroy.log
-          "DESTROY_EXIT=$LASTEXITCODE" | Tee-Object -Append native-destroy.log
+          Run-Harness -Arguments "--destroy-before-widget" -OutFile "native-destroy.log" -TimeoutSec 180
           exit 0
 
       - uses: actions/upload-artifact@v4
@@ -353,6 +374,7 @@ jobs:
           name: native-cef-harness
           path: |
             native-*.log
+            native-*.log.err
             cef-harness-native-*.log
             libcef-sha256.txt
           retention-days: 14
