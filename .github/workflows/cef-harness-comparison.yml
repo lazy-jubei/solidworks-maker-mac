@@ -1,0 +1,347 @@
+name: CEF window lifetime comparison (native Windows, official CEF 147.0.9)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cef-harness:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download official CEF 147.0.9 windows64 (standard)
+        shell: pwsh
+        run: |
+          $url = "https://cef-builds.spotifycdn.com/cef_binary_147.0.9%2Bg2812b73%2Bchromium-147.0.7727.49_windows64.tar.bz2"
+          curl.exe -fL --retry 3 -o cef.tar.bz2 $url
+          tar -xf cef.tar.bz2
+          $root = (Get-ChildItem -Directory -Filter "cef_binary_147.0.9*_windows64" | Select-Object -First 1).FullName
+          "CEF_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          (Get-FileHash "$root\Release\libcef.dll" -Algorithm SHA256).Hash.ToLower() | Tee-Object libcef-sha256.txt
+          Test-Path "$root\Release\locales\en-US.pak" | Tee-Object -Append libcef-sha256.txt
+
+      - name: Build the Wine harness source with MSVC
+        shell: pwsh
+        run: |
+          @'
+          #define UNICODE
+          #define _UNICODE
+          #define CEF_API_VERSION 14700
+          #include <windows.h>
+          #include <stdio.h>
+          #include <string.h>
+          #include "include/capi/cef_app_capi.h"
+          #include "include/capi/cef_client_capi.h"
+          #include "include/capi/cef_browser_capi.h"
+          #include "include/cef_api_hash.h"
+
+          /* v2: every lifecycle event carries GetTickCount() so stock Wine, the deferred
+           * WM_WINE_DESTROYWINDOW candidate and native Windows can be compared as raw
+           * timing traces instead of a pass/fail count. Also MSVC-compilable so the
+           * identical source runs on CI against the official CEF 147.0.9 package. */
+          static DWORD t0;
+          #define TICK (GetTickCount() - t0)
+          #ifdef _MSC_VER
+          #define RETADDR() ((void *)_ReturnAddress())
+          #include <intrin.h>
+          #else
+          #define RETADDR() __builtin_return_address(0)
+          #endif
+
+          static WNDPROC original_proc;
+          static int destroy_on_show, destroyed, created, closed, destroy_before_widget, triggered;
+          static HWND foreign_parent;
+          static HANDLE parent_ready, parent_thread_handle;
+          static HMODULE cef_module;
+          static BOOL (WINAPI *real_is_window)(HWND);
+          static void **is_window_slot;
+          static void *old_is_window;
+
+          static LRESULT CALLBACK parent_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+            if (m == WM_APP + 101) {
+              BOOL ok = DestroyWindow(h);
+              printf("T=%lu PARENT_DESTROY_SEND ok=%d\n", (unsigned long)TICK, ok);
+              fflush(stdout);
+              return ok;
+            }
+            if (m == WM_DESTROY) { printf("T=%lu PARENT_DESTROY\n", (unsigned long)TICK); fflush(stdout); }
+            if (m == WM_NCDESTROY) {
+              printf("T=%lu PARENT_NCDESTROY\n", (unsigned long)TICK);
+              fflush(stdout);
+              PostQuitMessage(0);
+            }
+            return DefWindowProcW(h, m, w, l);
+          }
+
+          static DWORD WINAPI make_parent(void *unused) {
+            WNDCLASSW c = {0};
+            MSG m;
+            c.lpfnWndProc = parent_proc;
+            c.hInstance = GetModuleHandleW(NULL);
+            c.lpszClassName = L"CefForeignParent";
+            RegisterClassW(&c);
+            printf("T=%lu PARENT_THREAD pid=%lu tid=%lu\n", (unsigned long)TICK, (unsigned long)GetCurrentProcessId(), (unsigned long)GetCurrentThreadId());
+            fflush(stdout);
+            foreign_parent = CreateWindowExW(0, c.lpszClassName, L"", WS_POPUP, 0, 0, 400, 300, NULL, NULL, c.hInstance, NULL);
+            printf("T=%lu PARENT_CREATED hwnd=%p\n", (unsigned long)TICK, foreign_parent);
+            fflush(stdout);
+            SetEvent(parent_ready);
+            while (GetMessageW(&m, NULL, 0, 0) > 0) { TranslateMessage(&m); DispatchMessageW(&m); }
+            return 0;
+          }
+
+          /* Patched IsWindow: the call from gfx::WindowImpl::Init's CHECK(::IsWindow(parent))
+           * (window_impl.cc:210) is the trigger point for this build. */
+          static BOOL WINAPI probe_is_window(HWND h) {
+            void *pc = RETADDR();
+            if (destroy_before_widget && !triggered && (BYTE *)pc == (BYTE *)cef_module + 0x1a73116) {
+              WCHAR cls[128];
+              GetClassNameW(h, cls, 128);
+              if (!wcscmp(cls, L"CefBrowserWindow")) {
+                triggered = 1;
+                printf("T=%lu CEF_PARENT_CHECK_ENTER hwnd=%p\n", (unsigned long)TICK, h);
+                fflush(stdout);
+                SendMessageW(foreign_parent, WM_APP + 101, 0, 0);
+                printf("T=%lu CEF_PARENT_CHECK valid=%d class=%ls\n", (unsigned long)TICK, real_is_window(h), cls);
+                fflush(stdout);
+              }
+            }
+            return real_is_window(h);
+          }
+
+          static BOOL install_probe(HMODULE mod) {
+            IMAGE_DOS_HEADER *d = (void *)mod;
+            IMAGE_NT_HEADERS64 *n;
+            DWORD protect;
+            if (d->e_magic != IMAGE_DOS_SIGNATURE) return FALSE;
+            n = (void *)((BYTE *)mod + d->e_lfanew);
+            if (n->FileHeader.TimeDateStamp != 0x69cc38cd) return FALSE;
+            cef_module = mod;
+            real_is_window = (void *)GetProcAddress(GetModuleHandleW(L"user32.dll"), "IsWindow");
+            is_window_slot = (void **)((BYTE *)mod + 0xf3d48e0);
+            if (!VirtualProtect(is_window_slot, sizeof(*is_window_slot), PAGE_READWRITE, &protect)) return FALSE;
+            old_is_window = InterlockedExchangePointer(is_window_slot, (void *)probe_is_window);
+            VirtualProtect(is_window_slot, sizeof(*is_window_slot), protect, &protect);
+            return TRUE;
+          }
+
+          static void remove_probe(void) {
+            if (is_window_slot) {
+              DWORD protect;
+              if (VirtualProtect(is_window_slot, sizeof(*is_window_slot), PAGE_READWRITE, &protect)) {
+                InterlockedExchangePointer(is_window_slot, old_is_window);
+                VirtualProtect(is_window_slot, sizeof(*is_window_slot), protect, &protect);
+              }
+            }
+          }
+
+          static cef_client_t client;
+          static cef_life_span_handler_t lifespan;
+          static void CEF_CALLBACK ref_add(cef_base_ref_counted_t *b) { (void)b; }
+          static int CEF_CALLBACK ref_release(cef_base_ref_counted_t *b) { (void)b; return 0; }
+          static int CEF_CALLBACK ref_one(cef_base_ref_counted_t *b) { (void)b; return 1; }
+          static int CEF_CALLBACK ref_some(cef_base_ref_counted_t *b) { (void)b; return 1; }
+          static void init_ref(cef_base_ref_counted_t *b, size_t size) {
+            b->size = size;
+            b->add_ref = ref_add;
+            b->release = ref_release;
+            b->has_one_ref = ref_one;
+            b->has_at_least_one_ref = ref_some;
+          }
+          static void CEF_CALLBACK after_created(cef_life_span_handler_t *self, cef_browser_t *browser) {
+            (void)self; (void)browser;
+            created++;
+            printf("T=%lu AFTER_CREATED count=%d\n", (unsigned long)TICK, created);
+            fflush(stdout);
+          }
+          static void CEF_CALLBACK before_close(cef_life_span_handler_t *self, cef_browser_t *browser) {
+            (void)self; (void)browser;
+            closed++;
+            printf("T=%lu BEFORE_CLOSE count=%d\n", (unsigned long)TICK, closed);
+            fflush(stdout);
+          }
+          static cef_life_span_handler_t *CEF_CALLBACK get_lifespan(cef_client_t *self) { (void)self; return &lifespan; }
+
+          static LRESULT CALLBACK host_proc(HWND h, UINT m, WPARAM w, LPARAM l) {
+            if (m == WM_DESTROY) { printf("T=%lu HOST_DESTROY hwnd=%p\n", (unsigned long)TICK, h); fflush(stdout); }
+            if (m == WM_NCDESTROY) { printf("T=%lu HOST_NCDESTROY\n", (unsigned long)TICK); fflush(stdout); }
+            if (destroy_on_show && !destroyed && m == WM_SHOWWINDOW && w) {
+              destroyed = 1;
+              BOOL ok = DestroyWindow(h);
+              printf("T=%lu HOST_DESTROYED hwnd=%p ok=%d valid=%d\n", (unsigned long)TICK, h, ok, IsWindow(h));
+              fflush(stdout);
+              return 0;
+            }
+            return CallWindowProcW(original_proc, h, m, w, l);
+          }
+
+          static LRESULT CALLBACK hook_proc(int code, WPARAM w, LPARAM l) {
+            if (code == HCBT_CREATEWND) {
+              WCHAR cls[128];
+              GetClassNameW((HWND)w, cls, 128);
+              if (!wcscmp(cls, L"CefBrowserWindow")) {
+                original_proc = (WNDPROC)SetWindowLongPtrW((HWND)w, GWLP_WNDPROC, (LONG_PTR)host_proc);
+                printf("T=%lu HOST_CREATING hwnd=%p\n", (unsigned long)TICK, (HWND)w);
+                fflush(stdout);
+              }
+            }
+            return CallNextHookEx(NULL, code, w, l);
+          }
+
+          static void str(cef_string_t *s, const WCHAR *w) {
+            s->str = (char16_t *)w;
+            s->length = wcslen(w);
+            s->dtor = NULL;
+          }
+
+          #ifdef _MSC_VER
+          typedef const char *(*fn_cef_api_hash)(int, int);
+          typedef int (*fn_cef_execute_process)(const cef_main_args_t *, cef_app_t *, void *);
+          typedef int (*fn_cef_initialize)(const cef_main_args_t *, const struct _cef_settings_t *, cef_app_t *, void *);
+          typedef void (*fn_cef_shutdown)(void);
+          typedef void (*fn_cef_do_message_loop_work)(void);
+          typedef cef_browser_t *(*fn_cef_browser_host_create_browser_sync)(const cef_window_info_t *, struct _cef_client_t *, const cef_string_t *, const struct _cef_browser_settings_t *, struct _cef_dictionary_value_t *, struct _cef_request_context_t *);
+          #define FN(name) fn_##name p_##name = (fn_##name)(void *)GetProcAddress(dll, #name); if (!p_##name) { puts("Missing " #name); return 3; }
+          #else
+          #define FN(name) __typeof__(&name) p_##name = (void *)GetProcAddress(dll, #name); if (!p_##name) { puts("Missing " #name); return 3; }
+          #endif
+
+          int main(int argc, char **argv) {
+            const WCHAR *dir = L"C:\\Program Files\\Common Files\\SOLIDWORKS Shared\\swcef";
+            WCHAR custom_dir[MAX_PATH], dll_path[MAX_PATH], locales_path[MAX_PATH], log_path[MAX_PATH], cache_path[MAX_PATH];
+            t0 = GetTickCount();
+            for (int i = 1; i < argc; i++)
+              if (!strcmp(argv[i], "--destroy-on-show")) destroy_on_show = 1;
+              else if (!strcmp(argv[i], "--destroy-before-widget")) destroy_before_widget = 1;
+            if (GetEnvironmentVariableW(L"CEF_TEST_HEADLESS", custom_dir, MAX_PATH)) SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+            if (GetEnvironmentVariableW(L"CEF_TEST_RUNTIME", custom_dir, MAX_PATH)) dir = custom_dir;
+            swprintf(dll_path, MAX_PATH, L"%ls\\libcef.dll", dir);
+            swprintf(locales_path, MAX_PATH, L"%ls\\locales", dir);
+            SetDllDirectoryW(dir);
+            HMODULE dll = LoadLibraryW(dll_path);
+            if (!dll) { printf("Load failed %lu\n", GetLastError()); return 2; }
+            if (argc > 1 && !strcmp(argv[1], "--version-only")) {
+              int (*version)(int) = (void *)GetProcAddress(dll, "cef_version_info");
+              if (!version) return 8;
+              for (int i = 0; i < 8; i++) printf("VERSION[%d]=%d\n", i, version(i));
+              return 0;
+            }
+            FN(cef_api_hash);
+            FN(cef_execute_process);
+            FN(cef_initialize);
+            FN(cef_do_message_loop_work);
+            FN(cef_shutdown);
+            FN(cef_browser_host_create_browser_sync);
+            const char *hash = p_cef_api_hash(14700, 0);
+            if (!hash || strcmp(hash, CEF_API_HASH_14700)) { puts("CEF API hash mismatch"); return 4; }
+            cef_main_args_t args = {GetModuleHandleW(NULL)};
+            int child = p_cef_execute_process(&args, NULL, NULL);
+            if (child >= 0) return child;
+            cef_settings_t settings = {0};
+            settings.size = sizeof(settings);
+            settings.no_sandbox = 1;
+            str(&settings.resources_dir_path, dir);
+            str(&settings.locales_dir_path, locales_path);
+            str(&settings.root_cache_path, L"C:\\users\\Public\\Documents\\codex-cef-harness-cache");
+            str(&settings.cache_path, L"C:\\users\\Public\\Documents\\codex-cef-harness-cache");
+            str(&settings.log_file, L"Z:\\Users\\jubei\\Projects\\solidworks-maker-mac\\logs\\cef-fix\\cef-harness-debug.log");
+            settings.log_severity = LOGSEVERITY_INFO;
+            if (GetEnvironmentVariableW(L"CEF_TEST_LOG", log_path, MAX_PATH)) str(&settings.log_file, log_path);
+            if (GetEnvironmentVariableW(L"CEF_TEST_CACHE", cache_path, MAX_PATH)) { str(&settings.cache_path, cache_path); str(&settings.root_cache_path, cache_path); }
+            if (!p_cef_initialize(&args, &settings, NULL, NULL)) { puts("Initialize failed"); return 5; }
+            init_ref(&client.base, sizeof(client));
+            init_ref(&lifespan.base, sizeof(lifespan));
+            client.get_life_span_handler = get_lifespan;
+            lifespan.on_after_created = after_created;
+            lifespan.on_before_close = before_close;
+            HWND parent;
+            if (destroy_before_widget) {
+              parent_ready = CreateEventW(NULL, TRUE, FALSE, NULL);
+              parent_thread_handle = CreateThread(NULL, 0, make_parent, NULL, 0, NULL);
+              if (!parent_thread_handle || WaitForSingleObject(parent_ready, 10000) != WAIT_OBJECT_0) return 9;
+              parent = foreign_parent;
+              if (!install_probe(dll)) return 10;
+            } else {
+              parent = CreateWindowExW(0, L"static", L"", WS_POPUP, 0, 0, 400, 300, NULL, NULL, args.instance, NULL);
+            }
+            if (!parent) return 6;
+            HHOOK hook = SetWindowsHookExW(WH_CBT, hook_proc, NULL, GetCurrentThreadId());
+            if (!hook) return 7;
+            cef_window_info_t window = {0};
+            window.size = sizeof(window);
+            window.parent_window = parent;
+            window.style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+            window.bounds.width = 400;
+            window.bounds.height = 300;
+            window.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+            cef_browser_settings_t browser_settings = {0};
+            browser_settings.size = sizeof(browser_settings);
+            cef_string_t url = {0};
+            str(&url, L"data:text/html,<html><body>CEF lifetime test</body></html>");
+            printf("T=%lu BEGIN_BROWSER_CREATE\n", (unsigned long)TICK);
+            fflush(stdout);
+            cef_browser_t *browser = p_cef_browser_host_create_browser_sync(&window, &client, &url, &browser_settings, NULL, NULL);
+            printf("T=%lu END_BROWSER_CREATE browser=%p destroyed=%d parent_visible=%d last_error=%lu\n", (unsigned long)TICK, browser, destroyed, IsWindowVisible(parent), GetLastError());
+            fflush(stdout);
+            UnhookWindowsHookEx(hook);
+            remove_probe();
+            if (browser) {
+              cef_browser_host_t *host = browser->get_host(browser);
+              if (host) {
+                host->close_browser(host, 1);
+                host->base.release(&host->base);
+              }
+              browser->base.release(&browser->base);
+            }
+            DWORD start = GetTickCount();
+            while (GetTickCount() - start < 5000 && (closed < created || GetTickCount() - start < 500)) {
+              p_cef_do_message_loop_work();
+              Sleep(1);
+            }
+            if (destroy_before_widget) {
+              if (IsWindow(parent)) SendMessageW(parent, WM_APP + 101, 0, 0);
+              WaitForSingleObject(parent_thread_handle, 5000);
+              CloseHandle(parent_thread_handle);
+              CloseHandle(parent_ready);
+            } else {
+              DestroyWindow(parent);
+            }
+            printf("T=%lu CLEANUP created=%d closed=%d\n", (unsigned long)TICK, created, closed);
+            fflush(stdout);
+            p_cef_shutdown();
+            if (destroy_before_widget) return triggered && closed == created ? 0 : 1;
+            return destroy_on_show ? (!destroyed || browser ? 1 : 0) : (!browser ? 1 : 0);
+          }
+          '@ | Set-Content -Encoding utf8 cef-window-create-harness.c
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          $install = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $install) { throw "MSVC installation unavailable" }
+          $build = "call `"$install\Common7\Tools\VsDevCmd.bat`" -arch=x64 >nul && cl /nologo /std:c17 /W3 /I `"$env:CEF_ROOT`" cef-window-create-harness.c /Fe:CefWindowCreateHarness.exe /link user32.lib"
+          & cmd.exe /d /s /c $build
+          if ($LASTEXITCODE -ne 0) { throw "Harness compilation failed: $LASTEXITCODE" }
+
+      - name: Run control and destroy-before-widget on native Windows
+        shell: pwsh
+        run: |
+          $env:CEF_TEST_RUNTIME = Join-Path $env:CEF_ROOT "Release"
+          & .\CefWindowCreateHarness.exe --version-only 2>&1 | Tee-Object native-version.log
+          $env:CEF_TEST_CACHE = Join-Path $env:RUNNER_TEMP "cef-cache-control"
+          $env:CEF_TEST_LOG = Join-Path $env:GITHUB_WORKSPACE "cef-harness-native-control.log"
+          & .\CefWindowCreateHarness.exe 2>&1 | Tee-Object native-control.log
+          "CONTROL_EXIT=$LASTEXITCODE" | Tee-Object -Append native-control.log
+          $env:CEF_TEST_CACHE = Join-Path $env:RUNNER_TEMP "cef-cache-destroy"
+          $env:CEF_TEST_LOG = Join-Path $env:GITHUB_WORKSPACE "cef-harness-native-destroy.log"
+          & .\CefWindowCreateHarness.exe --destroy-before-widget 2>&1 | Tee-Object native-destroy.log
+          "DESTROY_EXIT=$LASTEXITCODE" | Tee-Object -Append native-destroy.log
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-cef-harness
+          path: |
+            native-*.log
+            cef-harness-native-*.log
+            libcef-sha256.txt
+          retention-days: 14
