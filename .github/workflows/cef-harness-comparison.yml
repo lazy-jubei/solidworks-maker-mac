@@ -1,6 +1,8 @@
 name: CEF window lifetime comparison (native Windows, official CEF 147.0.9)
 on:
   workflow_dispatch:
+  push:
+    branches: [codex/cef-window-lifetime-windows]
 permissions:
   contents: read
 jobs:
