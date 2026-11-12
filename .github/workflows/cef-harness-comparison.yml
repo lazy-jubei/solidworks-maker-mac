@@ -16,7 +16,16 @@ jobs:
         shell: pwsh
         run: |
           $url = "https://cef-builds.spotifycdn.com/cef_binary_147.0.9%2Bg2812b73%2Bchromium-147.0.7727.49_windows64.tar.bz2"
-          curl.exe -fL --retry 3 -o cef.tar.bz2 $url
+          # Official SHA1 from cef-builds.spotifycdn.com/index.json for this exact archive.
+          $sha1 = "29b9e554fb5740a54c050e1ec3a14da8b34171d1"
+          for ($i = 1; $i -le 4; $i++) {
+            curl.exe -fL --http1.1 --retry 5 --retry-all-errors --retry-delay 3 -C - -o cef.tar.bz2 $url
+            $h = (Get-FileHash cef.tar.bz2 -Algorithm SHA1).Hash.ToLower()
+            if ($h -eq $sha1) { break }
+            "download attempt $i produced sha1=$h, retrying"
+            Start-Sleep -Seconds 3
+          }
+          if ($h -ne $sha1) { throw "CEF archive checksum mismatch: $h" }
           tar -xf cef.tar.bz2
           $root = (Get-ChildItem -Directory -Filter "cef_binary_147.0.9*_windows64" | Select-Object -First 1).FullName
           "CEF_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
