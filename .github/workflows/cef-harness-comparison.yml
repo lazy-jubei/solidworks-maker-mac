@@ -366,6 +366,9 @@ jobs:
           $env:CEF_TEST_CACHE = Join-Path $env:RUNNER_TEMP "cef-cache-destroy"
           $env:CEF_TEST_LOG = Join-Path $env:GITHUB_WORKSPACE "cef-harness-native-destroy.log"
           Run-Harness -Arguments "--destroy-before-widget" -OutFile "native-destroy.log" -TimeoutSec 180
+          $env:CEF_TEST_CACHE = Join-Path $env:RUNNER_TEMP "cef-cache-show"
+          $env:CEF_TEST_LOG = Join-Path $env:GITHUB_WORKSPACE "cef-harness-native-destroy-on-show.log"
+          Run-Harness -Arguments "--destroy-on-show" -OutFile "native-destroy-on-show.log" -TimeoutSec 180
           exit 0
 
       - uses: actions/upload-artifact@v4
