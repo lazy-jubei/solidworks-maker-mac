@@ -12,10 +12,19 @@ wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d 192 /f
 for key in LeftCommandIsCtrl RightCommandIsCtrl LeftOptionIsAlt; do
   wine reg add 'HKCU\Software\Wine\Mac Driver' /v "$key" /t REG_SZ /d y /f
 done
-# Chromium's GPU process spins on wined3d (about 5,400 SetPixelFormat calls a second), so it gets no Direct3D.
+# Refusing CEF's D3D delay-load dependencies caused startup failures. Clear the old
+# disabled overrides, preserving unrelated entries. Native browser-local libraries
+# are selected only after deployment; install-dxmt.sh configures them after copying.
 for dll in d3d11 dxgi d3d9 wined3d; do
-  wine reg add 'HKCU\Software\Wine\AppDefaults\swCefSubProc.exe\DllOverrides' /v "$dll" /t REG_SZ /d '' /f
+  wine reg delete 'HKCU\Software\Wine\AppDefaults\swCefSubProc.exe\DllOverrides' /v "$dll" /f >/dev/null 2>&1 || true
 done
+swcef="$WINEPREFIX/drive_c/Program Files/Common Files/SOLIDWORKS Shared/swcef"
+if [[ -f "$swcef/swCefSubProc.exe" && -f "$swcef/d3d11.dll" && -f "$swcef/dxgi.dll" && -f "$swcef/d3d10core.dll" ]]; then
+  for dll in d3d11 dxgi d3d10core; do
+    wine reg add 'HKCU\Software\Wine\AppDefaults\swCefSubProc.exe\DllOverrides' /v "$dll" /t REG_SZ /d native /f
+  done
+  wine reg add 'HKCU\Software\Wine\AppDefaults\swCefSubProc.exe\DllOverrides' /v winemetal /t REG_SZ /d builtin /f
+fi
 
 # The fresh install enables PLM Services; with it active, local document open/sketch
 # tests crashed unless tracing changed the timing. Match the working main setup.

@@ -59,7 +59,10 @@ install_text='1. In the Chrome window, sign in to your SolidWorks Maker account.
 # Windows programs that run in the background of any prefix, never the SOLIDWORKS installer.
 background_programs=(services winedevice svchost plugplay rpcss explorer conhost start wineboot
   rundll32 winemenubuilder mscorsvw ngen microsoftedgeupdate msedgewebview2 tabtip
-  3dexperiencelauncher 3dexperiencelaunchersystray)
+  3dexperiencelauncher 3dexperiencelaunchersystray
+  # Auto-start prefix services (system.reg Type 0x10, Start 2) that outlive the vendor
+  # installer; without them the installer_programs wait would never drain.
+  fnplicensingservice64 swvisualize.queue.server)
 # installer_programs: prints "<pid> <program.exe>" for each foreground Windows program running
 # in this Wine prefix. Other Wine installations on the Mac are told apart by their open files.
 installer_programs() {
@@ -187,7 +190,7 @@ installer_stage components 'applying Wine settings'
 wineserver -k
 wineserver -w
 installer_stage components 'installing graphics support'
-"$ROOT/scripts/install-dxmt.sh"
+"$ROOT/scripts/install-dxmt.sh" --webview-only
 installer_stage components 'building sign-in tools'
 "$ROOT/scripts/build-signin-tools.sh"
 if [[ ! -f "$shortcut" ]]; then
@@ -209,6 +212,14 @@ $install_text" 'Continue' 'Install SolidWorks' "$shortcut"
   fi
 fi
 close_dashboard
+# The initial graphics step prepares WebView2 before the vendor CAD files exist.
+# Finish the CEF deployment only after the installer has closed, with Wine stopped.
+installer_stage components 'waiting for the SolidWorks installer to close'
+while [[ -n "$(installer_programs)" ]]; do sleep 2; done
+wineserver -k
+wineserver -w
+installer_stage components 'finishing graphics support'
+"$ROOT/scripts/install-dxmt.sh"
 installer_stage finish 'creating the Mac app'
 python3 "$ROOT/scripts/tools/configure-shortcut.py" "$shortcut" "$SW_CONFIG_FILE"
 "$ROOT/scripts/09-mac-launcher.sh"
