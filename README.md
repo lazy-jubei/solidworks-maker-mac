@@ -24,6 +24,8 @@ too early, click Relaunch Chrome in the installer window.
 
 After setup, open **SolidWorks (Wine)** in Applications.
 
+![The SolidWorks Maker installer window](assets/installer.png)
+
 ## Update
 
 Run the install command again. If an installation is found, click **Update** in the
