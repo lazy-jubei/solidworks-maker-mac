@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise download/bootstrap and dependency failure paths without installing software."""
 import importlib.util
+import hashlib
 import os
 import shlex
 from pathlib import Path
@@ -38,10 +39,16 @@ with TemporaryDirectory(prefix='sw-install-check-') as temporary:
     with tarfile.open(archive, 'w:gz') as tar:
         tar.add(payload.parent, arcname='solidworks-maker-mac-main')
     env['INSTALL_TEST_ARCHIVE'] = str(archive)
+    checksum = base / 'SHA256SUMS'
+    checksum.write_text(hashlib.sha256(archive.read_bytes()).hexdigest() + '  solidworks-maker-mac.tar.gz\n')
+    env['INSTALL_TEST_CHECKSUM'] = str(checksum)
     executable(fakebin / 'curl', '''print download >> "$INSTALL_TEST_CALLS"
 if [[ "${INSTALL_TEST_DOWNLOAD_FAIL:-0}" == 1 ]]; then exit 22; fi
 while (( $# )); do
-  if [[ "$1" == -o ]]; then cp "$INSTALL_TEST_ARCHIVE" "$2"; exit; fi
+  if [[ "$1" == -o ]]; then
+    if [[ "$2" == */SHA256SUMS ]]; then cp "$INSTALL_TEST_CHECKSUM" "$2"; else cp "$INSTALL_TEST_ARCHIVE" "$2"; fi
+    exit
+  fi
   shift
 done
 exit 2
@@ -57,7 +64,7 @@ exit 2
     env.pop('INSTALL_TEST_DOWNLOAD_FAIL')
     calls.unlink()
     assert run().returncode == 0
-    assert calls.read_text().splitlines() == ['download', 'guided']
+    assert calls.read_text().splitlines() == ['download', 'download', 'guided']
     sentinel = target / 'keep'
     sentinel.write_text('preserve')
     calls.unlink()
@@ -151,7 +158,8 @@ fi
     assert wizard.returncode == 0, wizard.stderr
     full_run = ['01-storage.sh', 'setup', '04-launcher.sh', '05-webview2.sh',
             '06-settings.sh', 'stop:-k', 'stop:-w', 'install-dxmt.sh',
-            'build-signin-tools.sh', 'configure', '09-mac-launcher.sh', '10-fresh-signin.sh']
+            'build-signin-tools.sh', 'stop:-k', 'stop:-w', 'install-dxmt.sh',
+            'configure', '09-mac-launcher.sh', '10-fresh-signin.sh']
     assert calls.read_text().splitlines() == full_run
     # Every run starts from a new prefix: after a warning, the old one (with SOLIDWORKS) is deleted.
     calls.unlink()

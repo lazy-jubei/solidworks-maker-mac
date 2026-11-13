@@ -22,24 +22,18 @@ An installer window opens and walks you through the rest. You only need to do tw
 Everything in between runs on its own (30–60 minutes the first time). If you close Chrome
 too early, click Relaunch Chrome in the installer window.
 
-The bundled Chrome development version is solely used to change the user agent to identify as Windows.
-Otherwise the SolidWorks webpage will not allow for downloading the installer or launching SolidWorks.
+After setup, open **SolidWorks (Wine)** in Applications.
 
-![The SolidWorks Maker installer window](assets/installer.png)
+## Update
 
-The window has a Terminal pane with the details, and is built on your Mac from
-`scripts/tools/InstallerApp.swift` with Apple's Command Line Tools, so there is no
-downloaded app to approve. Without the Command Line Tools it falls back to macOS dialogs, and
-`SW_INSTALLER_UI=terminal` asks in Terminal instead. Closing the window stops setup, Chrome and Wine.
+Run the install command again to update the scripts and Mac shortcut. Your existing
+SOLIDWORKS installation, settings and CAD files are kept.
 
-Each run deletes the previous install and starts fresh, after a warning if SolidWorks is
-already installed. Downloads and the prepared Wine are kept, so a reinstall takes a few
-minutes. To run it again: `zsh ~/SolidWorksMakerMac/scripts/install-guided.sh`.
+To also update Wine patches and browser graphics, quit SolidWorks and Wine first, then run:
 
-After setup, open **SolidWorks (Wine)** in your Applications folder.
-On first launch, macOS may ask for access to the mounted Wine disk image and, if
-the image is on a share, to network volumes. SolidWorks may also ask to access
-folders that Wine maps to your Mac, such as Documents.
+```sh
+zsh ~/SolidWorksMakerMac/scripts/update.sh --wine
+```
 
 ## Details
 
@@ -56,23 +50,8 @@ needs an administrator password once. Python and the compilers come from Apple's
 Command Line Tools. On Apple Silicon, it also enables a Rosetta mode-switch workaround. On
 every Mac, SolidWorks is told it runs as x64 on an ARM64 host, because its license loader
 crashes under Wine on the native x64 path, Intel Macs included. A targeted mouse-capture fix
-lets the feature editor’s OK/Cancel buttons receive clicks correctly.
-
-### Windows fonts
-
-The installer adds Microsoft Core Fonts such as Arial and Times New Roman. To
-also install Segoe UI, provide a local directory containing `segoeui.ttf`. The
-installer imports the Segoe UI styles, Segoe UI Symbol, and Tahoma faces present
-in that directory. Use font files you are licensed to install. See
-[Microsoft’s font information](https://learn.microsoft.com/en-us/typography/font-list/segoe-ui).
-
-Set `SW_WINDOWS_FONTS_DIR` in `config.local.zsh` or export it in Terminal before
-running the installer. For an existing installation, run the following from the
-checkout with the Wine image mounted, then reopen SolidWorks.
-
-```sh
-zsh scripts/install-windows-fonts.sh '/path/to/fonts'
-```
+lets the feature editor’s OK/Cancel buttons receive clicks correctly. Browser graphics
+libraries are scoped to the embedded browsers to support startup and reduce idle CPU use.
 
 ### Graphics performance
 

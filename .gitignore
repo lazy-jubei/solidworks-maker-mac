@@ -21,3 +21,6 @@ __pycache__/
 *.dmg
 *.zip
 *.log
+.sw-project-files.json
+.sw-update-backups/
+.sw-update-lock/
