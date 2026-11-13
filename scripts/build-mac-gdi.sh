@@ -36,6 +36,9 @@ grep -q exclude_higher_siblings "$SRC/dlls/winemac.drv/window.c" \
 # Batch the z-order lookup when several siblings can cover the viewport.
 grep -q 'sending a server request for every GW_HWNDPREV' "$SRC/dlls/winemac.drv/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-batch-clip-siblings.patch"
+# Respect the FeatureManager's shaped splitter edge when clipping the viewport.
+grep -q 'The SOLIDWORKS sidebar has a shaped edge' "$SRC/dlls/winemac.drv/window.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-shaped-featuremanager-clip.patch"
 # Wait for tooltip pixels before ordering the popup onto the screen.
 grep -q performPendingTooltipOrder "$SRC/dlls/winemac.drv/cocoa_window.m" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-tooltip-first-paint.patch"

@@ -1,0 +1,23 @@
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1208,6 +1208,20 @@
+ 
+     if (!NtUserIsWindowVisible(sibling) || !NtUserGetWindowRect(sibling, &rect, dpi)) return;
+     NtUserMapWindowPoints(0, hwnd, (POINT *)&rect, 2, dpi);
++    /* The SOLIDWORKS sidebar has a shaped edge around its splitter handle.
++     * Its outer rectangle also covers viewport pixels outside that shape. */
++    if (NtGdiRectInRegion(region, &rect))
++    {
++        WCHAR title[32];
++        if (NtUserInternalGetWindowText(sibling, title, ARRAY_SIZE(title)) &&
++            !wcscmp(title, u"Tree Container Wnd") &&
++            NtUserGetWindowRgnEx(sibling, part, 0) != ERROR)
++        {
++            NtGdiOffsetRgn(part, rect.left, rect.top);
++            NtGdiCombineRgn(region, region, part, RGN_DIFF);
++            return;
++        }
++    }
+     if (NtGdiSetRectRgn(part, rect.left, rect.top, rect.right, rect.bottom))
+         NtGdiCombineRgn(region, region, part, RGN_DIFF);
+ }
