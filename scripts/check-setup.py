@@ -22,7 +22,11 @@ def fixture(base):
     scripts.mkdir(parents=True)
     shutil.copy2(root / 'setup.sh', project / 'setup.sh')
     shutil.copy2(root / 'config.example.zsh', project / 'config.example.zsh')
-    shutil.copy2(root / 'scripts/install-windows-fonts.sh', scripts / 'install-windows-fonts.sh')
+    shutil.copy2(root / 'scripts/install-windows-fonts.sh', scripts / 'install-local-fonts.sh')
+    executable(scripts / 'install-windows-fonts.sh',
+               'if (( $# )); then exec "${0:A:h}/install-local-fonts.sh" "$@"; fi\n'
+               'print auto-fonts >> "$SW_SETUP_TEST_CALLS"\n'
+               'exit "${SW_SETUP_TEST_FAIL_FONTS:-0}"\n')
     volume = base / 'wine volume'
     prefix = volume / 'prefix'
     app = volume / 'Wine Staging.app'
@@ -88,7 +92,7 @@ with TemporaryDirectory(prefix='sw-setup-check-') as directory:
         return [line for line in lines if line != 'build-shell32.sh compile'], 'build-shell32.sh compile' in lines
     success = run()
     assert success.returncode == 0, success.stderr
-    expected = ['prerequisites', *names[:3], 'stop:-k', 'stop:-w', *names[3:]]
+    expected = ['prerequisites', *names[:3], 'stop:-k', 'stop:-w', *names[3:], 'auto-fonts', 'stop:-k', 'stop:-w']
     assert recorded() == (expected, True)
     # The prepared prefix is kept, with a stamp of the scripts that made it.
     template = prefix.parent / 'prefix-template-11.16'
@@ -98,7 +102,7 @@ with TemporaryDirectory(prefix='sw-setup-check-') as directory:
     shutil.rmtree(prefix)
     copied = run()
     assert copied.returncode == 0 and 'Copying the prepared Wine prefix' in copied.stdout, copied.stderr
-    assert calls.read_text().splitlines() == ['prerequisites', *names[:2]]
+    assert calls.read_text().splitlines() == ['prerequisites', *names[:2], 'auto-fonts', 'stop:-k', 'stop:-w']
     assert (prefix / 'drive_c').is_dir() and not (prefix / '.sw-template-stamp').exists()
     # Supplied fonts install when reusing a prepared prefix and stay out of the template.
     calls.unlink()
@@ -119,6 +123,14 @@ with TemporaryDirectory(prefix='sw-setup-check-') as directory:
     assert (prefix / fonts_rel / 'tahoma.ttf').read_bytes() == b'tahoma'
     assert not list((template / fonts_rel).iterdir())
     env.pop('SW_WINDOWS_FONTS_DIR')
+    # Automatic font download/install failures must fail setup, including template reuse.
+    calls.unlink()
+    shutil.rmtree(prefix)
+    env['SW_SETUP_TEST_FAIL_FONTS'] = '38'
+    font_failure = run()
+    assert font_failure.returncode == 38, font_failure.stderr
+    assert calls.read_text().splitlines()[-3:] == ['auto-fonts', 'stop:-k', 'stop:-w']
+    env.pop('SW_SETUP_TEST_FAIL_FONTS')
     # A changed setup script makes the kept prefix stale: prepare from scratch again.
     calls.unlink()
     shutil.rmtree(prefix)

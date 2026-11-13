@@ -55,14 +55,10 @@ template_stamp() {
   files+=("$setup_root"/scripts/patches/**/*(.N))
   { print -r -- "$WINE_FLAVOR $WINE_VERSION $WINETRICKS_VERSION"; cat -- "${files[@]}"; } | shasum -a 256 | cut -d' ' -f1
 }
-# Keep locally supplied fonts out of the reusable template.
-install_optional_fonts() {
-  if [[ -z "${SW_WINDOWS_FONTS_DIR:-}" ]]; then
-    print 'For Segoe UI, set SW_WINDOWS_FONTS_DIR to a local font directory.'
-    return 0
-  fi
+# Install fonts after copying/saving the template, including when reusing one.
+install_windows_fonts() {
   local font_status=0
-  "$setup_root/scripts/install-windows-fonts.sh" "$SW_WINDOWS_FONTS_DIR" || font_status=$?
+  "$setup_root/scripts/install-windows-fonts.sh" ${SW_WINDOWS_FONTS_DIR:+"$SW_WINDOWS_FONTS_DIR"} || font_status=$?
   wineserver -k || true
   wineserver -w
   return "$font_status"
@@ -95,7 +91,7 @@ for stage in "${stages[@]}"; do
       print 'Copying the prepared Wine prefix (made by an earlier setup)…'
       ditto "$template" "$WINEPREFIX"
       rm -f "$WINEPREFIX/.sw-template-stamp"
-      install_optional_fonts
+      install_windows_fonts
       print 'Wine preparation complete.'
       exit 0
     fi
@@ -118,5 +114,5 @@ ditto "$WINEPREFIX" "$template.partial"
 print -r -- "$(template_stamp)" > "$template.partial/.sw-template-stamp"
 rm -rf -- "$template"
 mv -- "$template.partial" "$template"
-install_optional_fonts
+install_windows_fonts
 print 'Wine preparation complete.'
