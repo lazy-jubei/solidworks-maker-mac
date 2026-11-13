@@ -69,6 +69,7 @@ enum Step: Int, CaseIterable, Identifiable {
 
 enum Page: Equatable {
     case working
+    case existing
     case message(title: String, text: String, button: String, waitFor: String)
     // The script is watching for something to happen; no answer is needed.
     case waiting(title: String, text: String)
@@ -94,8 +95,11 @@ final class Installer: ObservableObject {
     @Published var msiFound = false
     @Published var waitFound = false
     @Published var chromeRunning = false
+    @Published var includeWine = false
+    @Published var updating = false
 
     let root: URL?
+    let updateSource: URL?
     private(set) var group: pid_t = 0
     private var running = false
     private var input: Int32 = -1
@@ -105,13 +109,14 @@ final class Installer: ObservableObject {
     private var failedStage: String?
     private var finishedText: String?
 
-    init(root: URL?) { self.root = root }
+    init(root: URL?, updateSource: URL? = nil) { self.root = root; self.updateSource = updateSource }
 
     var finished: Bool { if case .finished = page { return true } else { return false } }
     var failed: Bool { if case .failed = page { return true } else { return false } }
     var busy: Bool {
         guard running else { return false }
         if case .message = page { return false }
+        if case .existing = page { return false }
         if case .url = page { return false }
         if case .msi = page { return false }
         return true
@@ -155,8 +160,10 @@ final class Installer: ObservableObject {
         environment["SW_INSTALLER_UI"] = "app"
         environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         if environment["LANG"] == nil { environment["LANG"] = "en_US.UTF-8" }
-        let script = root.appendingPathComponent("scripts/install-guided.sh").path
-        let argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/zsh"), strdup(script), nil]
+        let script = (updateSource ?? root).appendingPathComponent(updateSource == nil ? "scripts/install-guided.sh" : "scripts/manage-existing.sh").path
+        var arguments = ["/bin/zsh", script]
+        if let updateSource { arguments += [updateSource.path, root.path] }
+        let argv: [UnsafeMutablePointer<CChar>?] = arguments.map { strdup($0) } + [nil]
         let envp: [UnsafeMutablePointer<CChar>?] = environment.map { strdup("\($0.key)=\($0.value)") } + [nil]
         var child: pid_t = 0
         let result = posix_spawn(&child, "/bin/zsh", &actions, &attributes, argv, envp)
@@ -216,6 +223,10 @@ final class Installer: ObservableObject {
         let fields = line.dropFirst(5).split(separator: "\t", omittingEmptySubsequences: false).map { unescape(String($0)) }
         func at(_ index: Int) -> String { index < fields.count ? fields[index] : "" }
         switch at(0) {
+        case "existing":
+            includeWine = false
+            updating = true
+            page = .existing
         case "stage":
             if let next = Step(key: at(1)) { step = next }
             stage = at(2)
@@ -284,6 +295,7 @@ final class Installer: ObservableObject {
     }
 
     func reply(_ answer: String) {
+        if answer == "reinstall" { updating = false }
         page = .working
         guard input >= 0 else { return }
         let bytes = Array((answer + "\n").utf8)
@@ -373,13 +385,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     override init() {
         let arguments = CommandLine.arguments
         var root: URL?
+        var updateSource: URL?
+        if let index = arguments.firstIndex(of: "--update-source"), index + 1 < arguments.count {
+            updateSource = URL(fileURLWithPath: arguments[index + 1])
+        }
         if let index = arguments.firstIndex(of: "--root"), index + 1 < arguments.count {
             root = URL(fileURLWithPath: arguments[index + 1])
         } else {
             // Built into <project>/tools/, so the project is two levels up.
             root = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
         }
-        installer = Installer(root: root)
+        installer = Installer(root: root, updateSource: updateSource)
         super.init()
     }
 
@@ -455,7 +471,13 @@ struct Sidebar: View {
             Text("SolidWorks Maker")
                 .font(.headline)
                 .padding(.bottom, 10)
-            ForEach(Step.allCases) { step in
+            if installer.updating {
+                Label("Update SolidWorks Maker", systemImage: "arrow.triangle.2.circlepath")
+                    .fontWeight(.semibold)
+                Text("Keep your installation, settings and CAD files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else { ForEach(Step.allCases) { step in
                 HStack(alignment: .top, spacing: 10) {
                     icon(for: step).frame(width: 18, height: 18)
                     VStack(alignment: .leading, spacing: 2) {
@@ -467,7 +489,7 @@ struct Sidebar: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-            }
+            } }
         }
         .padding(22)
     }
@@ -494,9 +516,18 @@ struct PageView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             switch installer.page {
+            case .existing:
+                heading("SolidWorks is already installed")
+                paragraph("Update the scripts and Mac shortcut while keeping your SOLIDWORKS installation, settings and CAD files.")
+                Toggle("Also update Wine patches and browser graphics", isOn: $installer.includeWine)
+                    .padding(.top, 8)
+                if installer.includeWine {
+                    paragraph("Quit SolidWorks and Wine before continuing. This can take several minutes.")
+                        .foregroundStyle(.secondary)
+                }
             case .working:
-                heading(installer.step.title)
-                paragraph(installer.step.explanation)
+                heading(installer.updating ? "Update SolidWorks Maker" : installer.step.title)
+                paragraph(installer.updating ? "Updating the selected components. Your SOLIDWORKS installation and CAD files are kept." : installer.step.explanation)
                     .foregroundStyle(.secondary)
                 Text(sentence(installer.stage) + "…")
                     .font(.headline)
@@ -573,7 +604,7 @@ struct PageView: View {
                     .foregroundStyle(.red)
                 paragraph("Setup stopped while \(stage). Details are in the terminal below.\n\nFix the problem, then click Try Again.")
             case let .finished(text):
-                Label("Setup is done", systemImage: "checkmark.seal.fill")
+                Label(installer.updating ? "Update complete" : "Setup is done", systemImage: "checkmark.seal.fill")
                     .font(.title2.bold())
                     .foregroundStyle(.green)
                 paragraph(text)
@@ -660,6 +691,9 @@ struct BottomBar: View {
             Button(installer.finished ? "Close" : "Quit") { NSApp.terminate(nil) }
             Spacer()
             switch installer.page {
+            case .existing:
+                Button("Reinstall…") { installer.reply("reinstall") }
+                primary("Update") { installer.reply(installer.includeWine ? "update-wine" : "update") }
             case .working:
                 EmptyView()
             case .waiting:

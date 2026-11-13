@@ -12,8 +12,10 @@ if [[ -e "$install_root" ]]; then
     print -u2 "Not updating an unrecognized folder or development checkout: $install_root"; exit 1
   }
   updating=1
-  update_lock="$install_root/.sw-update-lock"
-  mkdir "$update_lock" 2>/dev/null || { print -u2 'Another update is running (or left .sw-update-lock after interruption).'; exit 1; }
+  if [[ "${1:-}" == --update ]]; then
+    update_lock="$install_root/.sw-update-lock"
+    mkdir "$update_lock" 2>/dev/null || { print -u2 'Another update is running (or left .sw-update-lock after interruption).'; exit 1; }
+  fi
 elif [[ "${1:-}" == --update ]]; then
   print -u2 "Existing installation not found: $install_root"; exit 1
 fi
@@ -33,6 +35,10 @@ folders=("$work"/solidworks-maker-mac-*(N/))
 (( ${#folders} == 1 )) || { print -u2 'Unexpected release archive.'; exit 1; }
 source_root="$folders[1]"
 if (( updating )); then
+  if [[ "${1:-}" != --update ]]; then
+    zsh "$source_root/scripts/manage-existing.sh" "$source_root" "$install_root"
+    exit 0
+  fi
   python3 "$source_root/scripts/tools/update-project.py" "$source_root" "$install_root"
   # The Finder app embeds a small copy of the launch scripts; refresh it too.
   zsh "$install_root/scripts/09-mac-launcher.sh"

@@ -148,6 +148,24 @@ You only need to do two things:
 
 Everything in between runs on its own. The first time takes 30–60 minutes.'
 if [[ -f "$shortcut" ]]; then
+  if [[ "${SW_INSTALLER_REINSTALL:-0}" != 1 ]]; then
+    choice="$(installer_existing_choice)"
+    if [[ "$choice" != reinstall ]]; then
+      installer_stage components 'updating scripts and the Mac shortcut'
+      SW_INSTALL_DIR="$ROOT" zsh "$ROOT/install.sh" --update
+      if [[ "$choice" == update-wine ]]; then
+        installer_stage components 'updating Wine patches and graphics'
+        zsh "$ROOT/scripts/update-wine.sh"
+      fi
+      installer_stage finish 'update complete'
+      if [[ "$installer_ui" == app ]]; then
+        installer_emit finished 'Update complete. Your SOLIDWORKS installation, settings and CAD files were kept. Open SolidWorks (Wine) from Applications.'
+      else
+        installer_message 'Update complete. Open SolidWorks (Wine) from Applications.' 'Close'
+      fi
+      exit 0
+    fi
+  fi
   installer_message "SolidWorks is already installed. Reinstalling deletes it, along with any files saved inside it, and installs everything again.
 
 Quit SolidWorks first. To just open SolidWorks, quit this installer and open SolidWorks (Wine) from Applications." 'Delete and Reinstall' 'Reinstall SolidWorks?'

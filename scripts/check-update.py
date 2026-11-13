@@ -101,6 +101,7 @@ with TemporaryDirectory(prefix='sw-update-check-') as tmp:
     (download / 'scripts/update-project.tmp').rename(download / 'scripts/tools/update-project.py')
     put(download / 'scripts/09-mac-launcher.sh', '#!/bin/zsh\nprint refreshed >> "$BOOT_CALLS"\n', True)
     put(download / 'scripts/install-guided.sh', '#!/bin/zsh\nprint REINSTALL >> "$BOOT_CALLS"\nexit 77\n', True)
+    put(download / 'scripts/manage-existing.sh', '#!/bin/zsh\nprint gui-choice >> "$BOOT_CALLS"\n', True)
     archive = base / 'release.tar.gz'
     with tarfile.open(archive, 'w:gz') as tar:
         tar.add(download, arcname=download.name)
@@ -126,22 +127,58 @@ exit 2
     boot_env = dict(os.environ, PATH=str(fakebin)+os.pathsep+os.environ['PATH'],
                     SW_INSTALL_DIR=str(installed), BOOT_CALLS=str(boot_calls),
                     BOOT_ARCHIVE=str(archive), BOOT_SUMS=str(checksum))
-    def bootstrap():
-        return subprocess.run(['zsh', str(ROOT / 'install.sh')], env=boot_env, capture_output=True, text=True)
+    def bootstrap(*args):
+        return subprocess.run(['zsh', str(ROOT / 'install.sh'), *args], env=boot_env, capture_output=True, text=True)
     result = bootstrap()
+    assert result.returncode == 0 and boot_calls.read_text().splitlines() == ['gui-choice'], result.stderr
+    assert (installed / 'scripts/env.sh').read_text() == 'old env'
+    boot_calls.unlink()
+    result = bootstrap('--update')
     assert result.returncode == 0, result.stderr
     assert boot_calls.read_text().splitlines() == ['refreshed']
     assert (installed / 'config.local.zsh').read_text() == 'settings'
     assert (installed / 'swwine.sparsebundle/bands/1').read_text() == 'Wine and CAD'
     assert not (installed / '.sw-update-lock').exists()
     checksum.write_text('0'*64+'  solidworks-maker-mac.tar.gz\n')
-    failed = bootstrap()
+    failed = bootstrap('--update')
     assert failed.returncode != 0 and boot_calls.read_text().splitlines() == ['refreshed']
     assert not (installed / '.sw-update-lock').exists()
     # A stale/concurrent update lock must block the bootstrap before any replacement.
     (installed / '.sw-update-lock').mkdir()
-    assert bootstrap().returncode != 0
+    assert bootstrap('--update').returncode != 0
     (installed / '.sw-update-lock').rmdir()
+
+    # The staged GUI manager runs from the downloaded release while targeting an
+    # old installation. Exercise its real protocol, copy and cancellation paths.
+    staged, managed = base / 'staged release', base / 'managed installation'
+    for name in ['install.sh', 'setup.sh', 'scripts/update.sh']:
+        put(staged / name, '# fixture\n')
+    put(staged / 'scripts/env.sh', 'ROOT="$SW_PROJECT_ROOT"\n')
+    for name in ['manage-existing.sh', 'tools/installer-ui.zsh', 'tools/update-project.py']:
+        dest = staged / 'scripts' / name
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ROOT / 'scripts' / name, dest)
+    put(staged / 'scripts/09-mac-launcher.sh', '#!/bin/zsh\nprint refreshed >> "$BOOT_CALLS"\n', True)
+    put(staged / 'scripts/update-wine.sh', '#!/bin/zsh\nprint wine >> "$BOOT_CALLS"\n', True)
+    put(staged / 'scripts/install-guided.sh', '#!/bin/zsh\nprint "reinstall:$SW_INSTALLER_REINSTALL" >> "$BOOT_CALLS"\n', True)
+    put(managed / 'scripts/env.sh', '# old env\n')
+    put(managed / 'keep.SLDPRT', 'CAD')
+    manage_env = dict(os.environ, SW_INSTALLER_UI='app', BOOT_CALLS=str(boot_calls))
+    def manager(answer):
+        boot_calls.unlink(missing_ok=True)
+        return subprocess.run(['zsh', str(staged / 'scripts/manage-existing.sh'), str(staged), str(managed)],
+                              input=answer+'\n', env=manage_env, capture_output=True, text=True)
+    result = manager('@@quit')
+    assert result.returncode == 130 and not boot_calls.exists()
+    assert (managed / 'scripts/env.sh').read_text() == '# old env\n'
+    for choice, expected in [('update', ['refreshed']), ('update-wine', ['refreshed','wine']),
+                             ('reinstall', ['refreshed','reinstall:1'])]:
+        result = manager(choice)
+        assert result.returncode == 0, result.stderr
+        assert boot_calls.read_text().splitlines() == expected
+        assert (managed / 'keep.SLDPRT').read_text() == 'CAD'
+        assert '@@sw\texisting' in result.stderr
+        assert not (managed / '.sw-update-lock').exists()
 
     # Exercise the real runtime orchestration with fake mutation stages. A running
     # prefix refusal must precede all builds/deployments; no reset stage is supplied.

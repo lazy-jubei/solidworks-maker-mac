@@ -26,8 +26,9 @@ After setup, open **SolidWorks (Wine)** in Applications.
 
 ## Update
 
-Run the install command again to update the scripts and Mac shortcut. Your existing
-SOLIDWORKS installation, settings and CAD files are kept.
+Run the install command again. If an installation is found, click **Update** in the
+installer window. Your SOLIDWORKS installation, settings and CAD files are kept.
+Select **Also update Wine patches and browser graphics** to include those updates.
 
 To also update Wine patches and browser graphics, quit SolidWorks and Wine first, then run:
 

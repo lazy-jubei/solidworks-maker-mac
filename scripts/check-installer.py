@@ -165,7 +165,7 @@ fi
     calls.unlink()
     (prefix / 'drive_c/old-file').touch()
     again = subprocess.run(['zsh', str(scripts / 'install-guided.sh')], env=env,
-                           input=f'\nhttps://example.com/\n{msi}\n\n', capture_output=True, text=True)
+                           input=f'reinstall\n\nhttps://example.com/\n{msi}\n\n', capture_output=True, text=True)
     assert again.returncode == 0, again.stderr
     assert 'SolidWorks is already installed' in again.stdout and not (prefix / 'drive_c/old-file').exists()
     assert calls.read_text().splitlines() == full_run
@@ -239,6 +239,27 @@ fi
                     process.stdin.write(reply + '\n')
                     process.stdin.flush()
         return process.wait(timeout=30), events
+
+    # Existing installation: Update must never enter Chrome, reset setup, or delete CAD.
+    (desktop / 'SOLIDWORKS Design.lnk').touch()
+    sentinel = prefix / 'drive_c/keep.SLDPRT'
+    sentinel.write_text('preserve CAD')
+    executable(project / 'install.sh', 'print -r -- "update:$*" >> "$INSTALL_TEST_CALLS"\n')
+    executable(scripts / 'update-wine.sh', 'print update-wine >> "$INSTALL_TEST_CALLS"\n')
+    for choice in ['update', 'update-wine']:
+        code, events = run_window(lambda fields: choice if fields[0] == 'existing' else 'ok' if fields[0] == 'message' else None)
+        assert code == 0 and sentinel.read_text() == 'preserve CAD', events
+        assert [e[0] for e in events].count('existing') == 1
+        assert not any(e[0] in ('url', 'msi') for e in events)
+        assert calls.read_text().splitlines() == ['01-storage.sh', 'update:--update'] + (['update-wine'] if choice == 'update-wine' else [])
+    code, events = run_window(lambda fields: '@@quit' if fields[0] == 'existing' else None)
+    assert code == 130 and calls.read_text().splitlines() == ['01-storage.sh']
+    assert sentinel.read_text() == 'preserve CAD'
+    # Choosing Reinstall still requires the separate explicit deletion confirmation.
+    code, events = run_window(lambda fields: 'reinstall' if fields[0] == 'existing' else '@@quit' if fields[0] == 'message' else None)
+    assert code == 130 and sentinel.read_text() == 'preserve CAD'
+    confirmation = next(e for e in events if e[0] == 'message')
+    assert confirmation[1] == 'Delete and Reinstall'
 
     (desktop / 'SOLIDWORKS Design.lnk').unlink(missing_ok=True)
     shutil.rmtree(project / 'cache/installers', ignore_errors=True)

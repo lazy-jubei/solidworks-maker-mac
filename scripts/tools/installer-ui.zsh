@@ -56,7 +56,39 @@ PLIST
     fi
     codesign --force --sign - "$app" >/dev/null 2>&1 || true
   fi
-  open "$app" --args --root "$ROOT"
+  if [[ -n "${SW_UPDATE_SOURCE:-}" ]]; then
+    # The downloaded sources are temporary: keep the bootstrap alive until this
+    # window closes, and pass the source explicitly (LaunchServices drops env).
+    open -n -W "$app" --args --root "$ROOT" --update-source "$SW_UPDATE_SOURCE"
+  else
+    open "$app" --args --root "$ROOT"
+  fi
+}
+
+# A preserving update is the default; reinstall still requires its own warning.
+installer_existing_choice() {
+  local choice
+  if [[ "$installer_ui" == app ]]; then
+    installer_emit existing
+    choice="$(installer_app_read)"
+  elif (( installer_gui )); then
+    choice="$(installer_osascript 'on run argv
+  set answer to display dialog "An existing installation was found. Update keeps your SOLIDWORKS installation, settings and CAD files." with title "SolidWorks is already installed" buttons {"Quit", "Reinstall…", "Update"} default button 3 cancel button 1
+  if button returned of answer is "Reinstall…" then return "reinstall"
+  set answer to display dialog "Also update Wine patches and browser graphics? Quit SolidWorks and Wine first if you include them." with title "Update SolidWorks Maker" buttons {"Cancel", "Scripts Only", "Include Wine"} default button 2 cancel button 1
+  if button returned of answer is "Include Wine" then return "update-wine"
+  return "update"
+end run')"
+  else
+    print -u2 'SolidWorks is already installed. Update keeps your installation, settings and CAD files.'
+    print -u2 'Choose: update (default), update-wine, reinstall, or quit.'
+    read -r 'choice?Choice [update]: '
+    choice="${choice:-update}"
+  fi
+  case "$choice" in update|update-wine|reinstall) print -r -- "$choice" ;;
+    quit|@@quit) exit 130 ;;
+    *) print -u2 'Unknown update choice; nothing changed.'; return 2 ;;
+  esac
 }
 
 # App mode: messages to the window are tab-separated lines on stderr starting with @@sw
