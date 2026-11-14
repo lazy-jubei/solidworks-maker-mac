@@ -110,12 +110,19 @@ s = replace(s, '    LOAD_FUNCPTR(glGetIntegerv);', '''    LOAD_FUNCPTR(glGetInte
     LOAD_FUNCPTR(glBindFramebuffer);
     LOAD_FUNCPTR(glPixelStorei);
     LOAD_FUNCPTR(glReadBuffer);''')
-s = s.replace('    *drawable = &gl->base;', '''    {
+# Anchor on the window-drawable create call. "*drawable = &gl->base;" appears twice, and the
+# other one is the pbuffer path where client is NULL, so anchoring on it alone would either
+# patch the wrong drawable or silently do nothing if the pbuffer case ever came first.
+s = replace(s,
+    '    if (!(gl = opengl_drawable_create(sizeof(*gl), &macdrv_surface_funcs, format, client))) return FALSE;\n'
+    '    *drawable = &gl->base;',
+    '''    if (!(gl = opengl_drawable_create(sizeof(*gl), &macdrv_surface_funcs, format, client))) return FALSE;
+    {
         const char *enabled = getenv("SW_OPENGL_GDI");
         struct macdrv_client_surface *surface = impl_from_client_surface(client);
         surface->gdi_present = enabled && !strcmp(enabled, "1");
     }
-    *drawable = &gl->base;''', 1)
+    *drawable = &gl->base;''')
 # Reuse the reviewed state-saving readback from the upstream patch.
 patch = (Path(sys.argv[2]) if len(sys.argv) > 2 else Path(__file__).with_name('winemac-offscreen-upstream.patch')).read_text()
 a = patch.index('+static void read_offscreen_frame('); b = patch.index('\n static BOOL macdrv_surface_swap', a)
