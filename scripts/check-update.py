@@ -192,7 +192,8 @@ exit 2
     put(prefix / 'system.reg', 'registry')
     put(prefix / 'drive_c/models/keep.SLDPRT', 'CAD')
     calls = base / 'runtime-calls'
-    env = dict(os.environ, UPDATE_TEST_CALLS=str(calls))
+    modules = base / 'module-checks'
+    env = dict(os.environ, UPDATE_TEST_CALLS=str(calls), UPDATE_TEST_MODULES=str(modules))
     variables = {'ROOT': project, 'VOL': volume, 'IMAGE': image, 'WINEPREFIX': prefix, 'WINE_APP': app}
     put(scripts / 'env.sh', ''.join(f'export {k}={shlex.quote(str(v))}\n' for k, v in variables.items()))
     put(app / 'Contents/Resources/wine/bin/wine', '#!/bin/zsh\nexit 0\n', True)
@@ -206,13 +207,19 @@ exit 2
             f'print {shlex.quote(name)} >> "$UPDATE_TEST_CALLS"\n'
             f'[[ "${{UPDATE_TEST_FAIL:-}}" != {shlex.quote(name)} ]]\n', True)
     put(scripts / 'tools/require-stopped.py', 'import os,sys\nsys.exit(9 if os.environ.get("UPDATE_TEST_ACTIVE") else 0)\n')
+    # The installed-module verification is part of the orchestration, but the fixture has no real
+    # Wine to inspect, so it records that the check ran instead of running it.
+    put(scripts / 'check-installed-modules.py',
+        'import os\nopen(os.environ["UPDATE_TEST_MODULES"], "a").write("checked\\n")\n')
     def runtime(**extra):
         calls.unlink(missing_ok=True)
+        modules.unlink(missing_ok=True)
         return subprocess.run(['zsh', str(scripts / 'update-wine.sh')], env=dict(env, **extra), capture_output=True, text=True)
     active = runtime(UPDATE_TEST_ACTIVE='1')
     assert active.returncode == 9 and calls.read_text().splitlines() == ['01-storage.sh']
     result = runtime()
     assert result.returncode == 0, result.stderr
+    assert modules.read_text().splitlines() == ['checked']
     lines = calls.read_text().splitlines()
     assert [n for n in lines if not n.startswith('stop:')] == stages
     assert lines[lines.index('install-dxmt.sh')-2:lines.index('install-dxmt.sh')] == ['stop:-k', 'stop:-w']

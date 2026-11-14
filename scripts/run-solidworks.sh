@@ -72,7 +72,7 @@ fi
 wine "$W\\CATSTART.exe" -run "SWXDesktopLauncher.exe" \
     -object "--AppName=\"SWXCSWK_AP\" -tenant=$TENANT  -monoapp -3DRegistryURL=$REGISTRY" -nowindow \
     > "$LOG_DIR/solidworks-run.log" 2>&1
-status=$?
+launch_status=$?
 # SolidWorks leaves its platform behind when it exits: the launcher service, ViewServerV6 and
 # the Visualize queue server keep running against a session that no longer exists, and the next
 # start then finds the launcher "already running" while nothing answers it. Wait for them to
@@ -89,4 +89,4 @@ if kill -0 "$waiter" 2>/dev/null; then
   wine wineserver -k > /dev/null 2>&1
   wait "$waiter" 2>/dev/null
 fi
-exit "$status"
+exit "$launch_status"
