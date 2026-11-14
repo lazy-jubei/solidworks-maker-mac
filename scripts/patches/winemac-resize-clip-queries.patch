@@ -1,0 +1,112 @@
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -1212,22 +1212,32 @@
+         NtGdiCombineRgn(region, region, part, RGN_DIFF);
+ }
+ 
+-static void exclude_higher_siblings(HWND hwnd, HRGN region)
++static void exclude_higher_siblings(HWND hwnd, HWND root, HRGN region)
+ {
+     UINT dpi = NtUserGetWinMonitorDpi(hwnd, MDT_RAW_DPI);
+-    HWND root = NtUserGetAncestor(hwnd, GA_ROOT), current, sibling;
++    HWND current, sibling;
+     HWND siblings[128];
+     HRGN part = 0;
+ 
+     for (current = hwnd; current && current != root; current = NtUserGetAncestor(current, GA_PARENT))
+     {
+-        HWND previous = NtUserGetWindowRelative(current, GW_HWNDPREV);
+-        HWND first;
++        HWND previous = NULL, first = NULL;
+         ULONG size, index;
++
++        /* The server returns both siblings in the same window-tree reply. */
++        SERVER_START_REQ(get_window_tree)
++        {
++            req->handle = wine_server_user_handle(current);
++            if (!wine_server_call(req))
++            {
++                previous = wine_server_ptr_handle(reply->prev_sibling);
++                first = wine_server_ptr_handle(reply->first_sibling);
++            }
++        }
++        SERVER_END_REQ;
+ 
+         if (!previous) continue;
+         if (!part && !(part = NtGdiCreateRectRgn(0, 0, 0, 0))) return;
+-        first = NtUserGetWindowRelative(current, GW_HWNDFIRST);
+         if (first == previous)
+         {
+             exclude_sibling(hwnd, previous, dpi, region, part);
+@@ -1253,7 +1263,7 @@
+     if (part) NtGdiDeleteObjectApp(part);
+ }
+ 
+-static int client_surface_get_clip(struct macdrv_client_surface *surface, RECT **ret_rects)
++static int client_surface_get_clip(struct macdrv_client_surface *surface, HWND toplevel, RECT **ret_rects)
+ {
+     HWND hwnd = surface->client.hwnd;
+     RECT full = surface->client.monitor_rect;
+@@ -1274,7 +1284,7 @@
+     if ((region = NtGdiCreateRectRgn(0, 0, 0, 0)))
+     {
+         if (NtGdiGetRandomRgn(hdc, region, SYSRGN | NTGDI_RGN_MONITOR_DPI) > 0 &&
+-            (exclude_higher_siblings(hwnd, region), TRUE) &&
++            (exclude_higher_siblings(hwnd, toplevel, region), TRUE) &&
+             (size = NtGdiGetRegionData(region, 0, NULL)) && (data = malloc(size)) &&
+             NtGdiGetRegionData(region, size, data))
+         {
+@@ -1347,14 +1357,14 @@
+  * change are done together under it, so a concurrent present on the same window can't leave
+  * two views shown. The mask is always set before a view is shown and never touched while a
+  * view is being hidden, so a view never shows a frame without its clip. */
+-static void client_surface_sync_child(struct macdrv_client_surface *surface)
++static void client_surface_sync_child(struct macdrv_client_surface *surface, HWND toplevel)
+ {
+     HWND hwnd = surface->client.hwnd;
+     struct macdrv_win_data *data;
+     RECT *rects;
+     int count, hidden;
+ 
+-    count = client_surface_get_clip(surface, &rects);
++    count = client_surface_get_clip(surface, toplevel, &rects);
+ 
+     if ((data = get_win_data(hwnd)))
+     {
+@@ -1371,7 +1381,7 @@
+ static void macdrv_client_surface_update(struct client_surface *client)
+ {
+     struct macdrv_client_surface *surface = impl_from_client_surface(client);
+-    HWND hwnd = client->hwnd, toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
++    HWND hwnd = client->hwnd, toplevel = client->toplevel;
+     struct macdrv_win_data *data;
+ 
+     TRACE("%s\n", debugstr_client_surface(client));
+@@ -1384,7 +1394,7 @@
+     if (toplevel == hwnd && !surface->gdi_present) client_surface_set_clip(surface, NULL, -1);
+     release_win_data(data);
+ 
+-    if (toplevel != hwnd && !surface->gdi_present) client_surface_sync_child(surface);
++    if (toplevel != hwnd && !surface->gdi_present) client_surface_sync_child(surface, toplevel);
+ }
+ 
+ /* Native presentation: the GL view is shown directly, clipped to the window's visible region. */
+@@ -1392,7 +1402,8 @@
+ {
+     HWND hwnd = surface->client.hwnd;
+     struct macdrv_win_data *data;
+-    BOOL child = hwnd != NtUserGetAncestor(hwnd, GA_ROOT);
++    HWND toplevel = NtUserGetAncestor(hwnd, GA_ROOT);
++    BOOL child = hwnd != toplevel;
+ 
+     if (!(data = get_win_data(hwnd))) return;
+     if (data->client_view != surface->cocoa_view)
+@@ -1404,7 +1415,7 @@
+     if (!child) client_surface_set_hidden(surface, 0);
+     release_win_data(data);
+ 
+-    if (child) client_surface_sync_child(surface);
++    if (child) client_surface_sync_child(surface, toplevel);
+ }
+ 
+ static void macdrv_client_surface_present(struct client_surface *client, HDC hdc)

@@ -20,10 +20,16 @@ W='C:\Program Files\Dassault Systemes\SOLIDWORKS 3DEXPERIENCE R2026x\win_b64\cod
 LOG_DIR="${SW_LOG_DIR:-$ROOT/logs}"
 mkdir -p "$LOG_DIR"
 cd "$WINEPREFIX/drive_c"
-# The Launcher service can exit at boot with "Core function failed!", but starts fine afterwards.
+# The Launcher service can exit at boot with "Core function failed!", but starts fine afterwards,
+# so start it on every launch. Do not gate this on the health probe: 127.0.0.1:20250 answers for
+# *any* launcher on the machine, so a second Wine install makes the probe succeed while this
+# prefix's launcher never starts - and a launcher that starts while the port is taken binds
+# nothing, which leaves SolidWorks at "Connecting to 3DEXPERIENCE" for the whole session.
+# `net start` is a no-op when the service is already up, so this costs nothing when all is well.
+wine wineboot > /dev/null 2>&1
+wine net start 3DEXPERIENCELauncher >> "$LOG_DIR/solidworks-run.log" 2>&1
 if ! curl -s -m 3 -o /dev/null "http://127.0.0.1:20250/iframe?version=1.0&id=health"; then
-  wine wineboot > /dev/null 2>&1
-  wine net start 3DEXPERIENCELauncher > /dev/null 2>&1
+  print -r -- "No 3DEXPERIENCE launcher answered on 127.0.0.1:20250." >> "$LOG_DIR/solidworks-run.log"
 fi
 # Only use our driver's options when this exact driver was installed by our builder.
 # A later Wine update invalidates the marker and leaves normal rendering enabled.
@@ -49,9 +55,38 @@ if [[ -f "$BUTTON_DLL.capture.sha256" && -f "$WINEPREFIX/drive_c/windows/system3
     export SW_BUTTON_CAPTURE_GUARD="${SW_BUTTON_CAPTURE_GUARD:-1}"
   fi
 fi
+# gdi32 is a Wine builtin, so its patched PE must match between the bundle and the prefix. A Wine
+# or prefix update replaces one half and leaves the pair mismatched, which paints the search
+# results wrong again; fall back to the saved original instead of running a mixed pair.
+GDI_DLL="$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/gdi32.dll"
+GDI_PREFIX_DLL="$WINEPREFIX/drive_c/windows/system32/gdi32.dll"
+if [[ -f "$GDI_DLL" && -f "$GDI_PREFIX_DLL" && -f "$GDI_DLL.stock" ]] &&
+   ! cmp -s "$GDI_DLL" "$GDI_PREFIX_DLL"; then
+  print -r -- "gdi32 mismatch between bundle and prefix; restoring the saved original" >> "$LOG_DIR/solidworks-run.log"
+  cp "$GDI_DLL.stock" "$GDI_DLL"
+  cp "$GDI_DLL.stock" "$GDI_PREFIX_DLL"
+fi
 # Automatic cross-process viewport resizing is disabled: it caused sketch crashes.
 # Keep CAD's own geometry untouched. SwViewportFix is retained only for diagnosis.
 
-exec wine "$W\\CATSTART.exe" -run "SWXDesktopLauncher.exe" \
+wine "$W\\CATSTART.exe" -run "SWXDesktopLauncher.exe" \
     -object "--AppName=\"SWXCSWK_AP\" -tenant=$TENANT  -monoapp -3DRegistryURL=$REGISTRY" -nowindow \
     > "$LOG_DIR/solidworks-run.log" 2>&1
+status=$?
+# SolidWorks leaves its platform behind when it exits: the launcher service, ViewServerV6 and
+# the Visualize queue server keep running against a session that no longer exists, and the next
+# start then finds the launcher "already running" while nothing answers it. Wait for them to
+# leave on their own, then stop this prefix only - wineserver is prefix-scoped, so another Wine
+# install on the same machine keeps its own processes.
+wine wineserver -w > /dev/null 2>&1 &
+waiter=$!
+for _ in {1.."${SW_SHUTDOWN_GRACE:-30}"}; do
+  kill -0 "$waiter" 2>/dev/null || break
+  sleep 1
+done
+if kill -0 "$waiter" 2>/dev/null; then
+  print -r -- "SolidWorks exited; stopping leftover Wine processes for $WINEPREFIX" >> "$LOG_DIR/solidworks-run.log"
+  wine wineserver -k > /dev/null 2>&1
+  wait "$waiter" 2>/dev/null
+fi
+exit "$status"

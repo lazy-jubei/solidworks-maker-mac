@@ -14,7 +14,9 @@ export SW_TOOLS="${SW_TOOLS:-$ROOT/tools}"
 # 11.21 hung forever compiling 32-bit .NET under Rosetta.
 WINE_VERSION="11.16"
 WINE_FLAVOR="staging"
-WINE_APP="$VOL/wine-$WINE_FLAVOR-$WINE_VERSION/Wine Staging.app"
+# Exported because check-installed-modules.py reads it from the environment; as a plain shell
+# variable it would be invisible to the python3 calls that update-wine.sh makes.
+export WINE_APP="$VOL/wine-$WINE_FLAVOR-$WINE_VERSION/Wine Staging.app"
 WINE_URL="https://github.com/Gcenx/macOS_Wine_builds/releases/download/$WINE_VERSION/wine-$WINE_FLAVOR-$WINE_VERSION-osx64.tar.xz"
 WINETRICKS_VERSION="20260125"
 WINETRICKS_URL="https://raw.githubusercontent.com/Winetricks/winetricks/$WINETRICKS_VERSION/src/winetricks"

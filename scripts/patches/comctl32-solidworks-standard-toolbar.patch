@@ -1,0 +1,27 @@
+--- a/dlls/comctl32/toolbar.c
++++ b/dlls/comctl32/toolbar.c
+@@ -1262,6 +1262,24 @@
+ 	tbcd.nmcd.hdc = hdc;
+ 	tbcd.nmcd.rc = ps->rcPaint;
+ 	TOOLBAR_SendNotify(&tbcd.nmcd.hdr, infoPtr, NM_CUSTOMDRAW);
++    }
++
++    if (infoPtr->nNumButtons == 8 && infoPtr->buttons[7].idCommand == 57644 &&
++        !(infoPtr->buttons[7].fsState & TBSTATE_ENABLED))
++    {
++        WCHAR title[32], image[MAX_PATH], *name;
++
++        if (GetWindowTextW(infoPtr->hwndSelf, title, ARRAY_SIZE(title)) &&
++            !wcscmp(title, L"Standard") &&
++            GetModuleFileNameW(NULL, image, ARRAY_SIZE(image)) &&
++            (name = wcsrchr(image, '\\')) && !wcsicmp(name + 1, L"sldworks.exe"))
++        {
++            RECT trailing = rcClient;
++
++            /* The compact Standard toolbar paints a black strip after Redo. */
++            trailing.left = infoPtr->buttons[7].rect.right;
++            FillRect(hdc, &trailing, GetSysColorBrush(COLOR_BTNFACE));
++        }
+     }
+ }
+ 

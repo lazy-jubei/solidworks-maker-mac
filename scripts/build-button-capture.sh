@@ -16,6 +16,12 @@ python3 "${0:A:h}/patches/comctl32-button-capture.py" "$SRC"
 # Keep PropertyManager headings from shrinking during repeated paint calls.
 grep -q sw_keep_heading_width "$SRC/dlls/comctl32_v6/button.c" \
   || patch -s -N -d "$SRC" -p1 < "${0:A:h}/patches/comctl32-property-manager-layout.patch"
+# Paint the Options search edit before rebuilding the results.
+grep -q uiOptionsSearchWindow_c "$SRC/dlls/comctl32_v6/edit.c" \
+  || patch -s -N -d "$SRC" -p1 < "${0:A:h}/patches/comctl32-solidworks-search-edit.patch"
+# Clear the empty trailing strip of the compact Standard toolbar.
+grep -q 'compact Standard toolbar paints' "$SRC/dlls/comctl32/toolbar.c" \
+  || patch -s -N -d "$SRC" -p1 < "${0:A:h}/patches/comctl32-solidworks-standard-toolbar.patch"
 export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll > "$ROOT/logs/button-capture-build.log" 2>&1

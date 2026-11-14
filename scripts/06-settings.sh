@@ -8,6 +8,9 @@ wine reg add 'HKCU\Software\Wine\WineDbg' /v ShowCrashDialog /t REG_DWORD /d 0 /
 # Retina: draw at the display's real pixels, with the UI scaled to match. Slower than non-Retina.
 wine reg add 'HKCU\Software\Wine\Mac Driver' /v RetinaMode /t REG_SZ /d y /f
 wine reg add 'HKCU\Control Panel\Desktop' /v LogPixels /t REG_DWORD /d 192 /f
+# Enable Windows text smoothing and ClearType for small GDI labels and menus.
+wine reg add 'HKCU\Control Panel\Desktop' /v FontSmoothing /t REG_SZ /d 2 /f
+wine reg add 'HKCU\Control Panel\Desktop' /v FontSmoothingType /t REG_DWORD /d 2 /f
 # Wine doesn't treat Command as Ctrl by default, so Command-V doesn't paste. Left Option stays available as Alt.
 for key in LeftCommandIsCtrl RightCommandIsCtrl LeftOptionIsAlt; do
   wine reg add 'HKCU\Software\Wine\Mac Driver' /v "$key" /t REG_SZ /d y /f

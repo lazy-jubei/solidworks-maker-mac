@@ -35,4 +35,6 @@ trap 'WINEPREFIX="$WINEPREFIX" "$server" -k 2>/dev/null || true; WINEPREFIX="$WI
 "$server" -k
 "$server" -w
 "$ROOT/scripts/09-mac-launcher.sh"
+# An update can replace one half of a patched module and silently turn a fix off.
+python3 "$ROOT/scripts/check-installed-modules.py"
 print 'Wine patches and browser graphics updated. Open SolidWorks (Wine) from Applications.'

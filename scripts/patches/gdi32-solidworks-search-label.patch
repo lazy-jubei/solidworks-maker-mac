@@ -1,0 +1,23 @@
+--- a/dlls/gdi32/text.c
++++ b/dlls/gdi32/text.c
+@@ -990,6 +990,20 @@
+         }
+     }
+ 
++    /* SOLIDWORKS includes the terminator when painting an options search row. */
++    if (count && count <= INT_MAX && flags == (ETO_CLIPPED | ETO_IGNORELANGUAGE) &&
++        !dx && str && !str[count - 1])
++    {
++        WCHAR path[MAX_PATH], *name;
++        DWORD length = GetModuleFileNameW( NULL, path, ARRAY_SIZE(path) );
++
++        if (length && length < ARRAY_SIZE(path))
++        {
++            name = wcsrchr( path, '\\' );
++            if (!wcsicmp( name ? name + 1 : path, L"sldworks.exe" )) --count;
++        }
++    }
++
+     ret = NtGdiExtTextOutW( hdc, x, y, flags, rect, str, count, dx, 0 );
+ 
+     HeapFree( GetProcessHeap(), 0, glyphs );

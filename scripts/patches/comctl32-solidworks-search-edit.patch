@@ -1,0 +1,19 @@
+--- a/dlls/comctl32_v6/edit.c
++++ b/dlls/comctl32_v6/edit.c
+@@ -2639,7 +2639,16 @@
+ 
+         if(send_update || (es->flags & EF_UPDATE))
+ 	{
++            WCHAR parent_title[32];
++
+ 	    es->flags &= ~EF_UPDATE;
++            if (GetWindowTextW( GetParent(es->hwndSelf), parent_title, ARRAY_SIZE(parent_title) ) &&
++                !wcscmp( parent_title, L"uiOptionsSearchWindow_c" ))
++            {
++                /* Paint the edit before EN_CHANGE rebuilds the results. */
++                EDIT_InvalidateUniscribeData(es);
++                UpdateWindow(es->hwndSelf);
++            }
+ 	    if (!notify_parent(es, EN_CHANGE)) return;
+ 	}
+ 	EDIT_InvalidateUniscribeData(es);

@@ -3,7 +3,10 @@
 #  - winemac.so: GL views clipped to their visible region (the FeatureManager stays visible),
 #    optional GDI presentation (SW_OPENGL_GDI=1), sRGB windows, multi-monitor fixes;
 #  - opengl32: simple GL calls batched into one PE/unix transition (WINE_GL_BATCH=0 disables).
-# Stop the selected prefix before installing. No vendor DLLs change.
+#  - gdi32: render the SolidWorks search results without a trailing NUL glyph.
+# Stop the selected prefix before installing. Only Wine's own DLLs change (gdi32 is a Wine
+# builtin, so its patched PE goes in the bundle and in the prefix); vendor DLLs are untouched.
+# Each replaced file keeps its original next to it as <name>.stock.
 set -eu
 source "${0:A:h}/env.sh"
 BUILD="${SW_BUILD:-$VOL/build}"
@@ -36,6 +39,9 @@ grep -q exclude_higher_siblings "$SRC/dlls/winemac.drv/window.c" \
 # Batch the z-order lookup when several siblings can cover the viewport.
 grep -q 'sending a server request for every GW_HWNDPREV' "$SRC/dlls/winemac.drv/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-batch-clip-siblings.patch"
+# Read both clipping siblings from one wineserver reply and reuse the known top-level window.
+grep -q 'client_surface_get_clip(.*HWND toplevel' "$SRC/dlls/winemac.drv/window.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-resize-clip-queries.patch"
 # Respect the FeatureManager's shaped splitter edge when clipping the viewport.
 grep -q 'The SOLIDWORKS sidebar has a shaped edge' "$SRC/dlls/winemac.drv/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-shaped-featuremanager-clip.patch"
@@ -45,13 +51,22 @@ grep -q performPendingTooltipOrder "$SRC/dlls/winemac.drv/cocoa_window.m" \
 # SOLIDWORKS uses a custom window class for its status-bar warning balloon.
 grep -q swBalloonTip "$SRC/dlls/winemac.drv/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-balloon-first-paint.patch"
+# Snapshot Options pixels and repaint scrolls from the controls.
+grep -q macdrv_ScrollDC "$SRC/dlls/winemac.drv/gdi.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-ui-repaint.patch"
+# Keep SolidWorks status tooltips within the display work area before showing them.
+grep -q 'paintSettleMs:.*constrainTip:' "$SRC/dlls/winemac.drv/cocoa_window.m" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-tooltip-screen.patch"
+# The search result passes a terminating NUL in the displayed character count.
+grep -q 'includes the terminator when painting' "$SRC/dlls/gdi32/text.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/gdi32-solidworks-search-label.patch"
 # One PE/unix transition per batch of simple GL calls instead of one per call.
 grep -q wine_batch_execute "$SRC/dlls/opengl32/unix_thunks.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/opengl32-batch-calls.patch"
 export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/winemac.drv/winemac.so dlls/opengl32/opengl32.so \
-  dlls/opengl32/x86_64-windows/opengl32.dll > "$ROOT/logs/winemac-gdi-build.log" 2>&1
+  dlls/opengl32/x86_64-windows/opengl32.dll dlls/gdi32/x86_64-windows/gdi32.dll > "$ROOT/logs/winemac-gdi-build.log" 2>&1
 python3 - "$OBJ/dlls/winemac.drv/winemac.so" "$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-unix/winemac.so" <<'PY'
 from pathlib import Path
 import hashlib,shutil,subprocess,sys
@@ -65,18 +80,20 @@ dst.with_name(dst.name+'.gdi.sha256').write_text(hashlib.sha256(dst.read_bytes()
 print('Installed Mac GDI presentation driver; run-solidworks.sh will enable it for this bundle.')
 PY
 # opengl32's PE and unix halves share a call table, so both are replaced together (originals kept).
-python3 - "$OBJ/dlls/opengl32" "$WINE_APP/Contents/Resources/wine/lib/wine" "$WINEPREFIX/drive_c/windows/system32" <<'PY'
+python3 - "$OBJ/dlls" "$WINE_APP/Contents/Resources/wine/lib/wine" "$WINEPREFIX/drive_c/windows/system32" <<'PY'
 from pathlib import Path
 import shutil,subprocess,sys
 obj,lib,system32=map(Path,sys.argv[1:])
-pairs=[(obj/'x86_64-windows/opengl32.dll',lib/'x86_64-windows/opengl32.dll'),
-       (obj/'opengl32.so',lib/'x86_64-unix/opengl32.so'),
-       (obj/'x86_64-windows/opengl32.dll',system32/'opengl32.dll')]
+pairs=[(obj/'opengl32/x86_64-windows/opengl32.dll',lib/'x86_64-windows/opengl32.dll'),
+       (obj/'opengl32/opengl32.so',lib/'x86_64-unix/opengl32.so'),
+       (obj/'opengl32/x86_64-windows/opengl32.dll',system32/'opengl32.dll'),
+       (obj/'gdi32/x86_64-windows/gdi32.dll',lib/'x86_64-windows/gdi32.dll'),
+       (obj/'gdi32/x86_64-windows/gdi32.dll',system32/'gdi32.dll')]
 for src,dst in pairs:
     backup=dst.with_name(dst.name+'.stock')
     if dst.exists() and not backup.exists():shutil.copy2(dst,backup)
     tmp=dst.with_name(dst.name+'.new');shutil.copy2(src,tmp)
     if dst.suffix=='.so':subprocess.run(['/usr/bin/codesign','--force','--sign','-',str(tmp)],check=True)
     tmp.replace(dst)
-print('Installed batched opengl32 (WINE_GL_BATCH=0 turns batching off).')
+print('Installed batched opengl32 and the SolidWorks search text fix.')
 PY

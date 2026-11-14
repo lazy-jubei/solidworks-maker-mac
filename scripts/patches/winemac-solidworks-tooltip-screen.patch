@@ -1,0 +1,111 @@
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -637,26 +637,31 @@
+ /***********************************************************************
+  *              show_window
+  */
+-static BOOL get_popup_paint_delay(HWND hwnd, unsigned int *settle_ms)
++static BOOL get_popup_paint_delay(HWND hwnd, unsigned int *settle_ms, BOOL *constrain_tip)
+ {
+     WCHAR buffer[32];
+     UNICODE_STRING name = {0, sizeof(buffer), buffer};
+ 
+     *settle_ms = 0;
++    *constrain_tip = FALSE;
+     if (!NtUserGetClassName(hwnd, FALSE, &name)) return FALSE;
+     if (!wcsicmp(buffer, u"swBalloonTip"))
+     {
+         *settle_ms = 40;
+         return TRUE;
+     }
+-    return !wcsicmp(buffer, u"tooltips_class32") ||
+-           (macdrv_solidworks_process && !wcsicmp(buffer, u"#32768"));
++    if (!wcsicmp(buffer, u"tooltips_class32"))
++    {
++        *constrain_tip = macdrv_solidworks_process;
++        return TRUE;
++    }
++    return macdrv_solidworks_process && !wcsicmp(buffer, u"#32768");
+ }
+ 
+ static void show_window(struct macdrv_win_data *data)
+ {
+     unsigned int settle_ms = 0;
+-    BOOL wait_for_paint;
++    BOOL wait_for_paint, constrain_tip = FALSE;
+     HWND prev = NULL;
+     HWND next = NULL;
+     macdrv_window prev_window = NULL;
+@@ -683,9 +688,9 @@
+ 
+     if (!prev_window)
+         activate = activate_on_focus_time && (NtGetTickCount() - activate_on_focus_time < 2000);
+-    wait_for_paint = !activate && get_popup_paint_delay(data->hwnd, &settle_ms);
++    wait_for_paint = !activate && get_popup_paint_delay(data->hwnd, &settle_ms, &constrain_tip);
+     macdrv_order_cocoa_window(data->cocoa_window, prev_window, next_window, activate,
+-                             wait_for_paint, settle_ms);
++                             wait_for_paint, settle_ms, constrain_tip);
+     data->on_screen = TRUE;
+ 
+     info.cbSize = sizeof(info);
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -1942,13 +1942,28 @@
+     }
+ 
+     - (void) orderTooltipBelow:(WineWindow*)prev orAbove:(WineWindow*)next
+-                  paintSettleMs:(unsigned int)paintSettleMs
++                  paintSettleMs:(unsigned int)paintSettleMs constrainTip:(BOOL)constrainTip
+     {
+         NSUInteger generation = ++tooltipOrderGeneration;
+         tooltipPaintSettleMs = paintSettleMs;
+         tooltipPaintOrderScheduled = NO;
+         [pendingTooltipOrder release];
+         pendingTooltipOrder = [^{
++            if (constrainTip)
++            {
++                NSPoint pointer = [NSEvent mouseLocation];
++                for (NSScreen *screen in [NSScreen screens])
++                {
++                    if (!NSPointInRect(pointer, [screen frame])) continue;
++                    NSRect bounds = [screen visibleFrame];
++                    NSRect frame = [self frame], constrained = frame;
++                    constrained.origin.x = MAX(NSMinX(bounds), MIN(NSMinX(frame), NSMaxX(bounds) - NSWidth(frame)));
++                    if (NSMinY(frame) < NSMinY(bounds))
++                        constrained.origin.y = MAX(NSMinY(bounds), MIN(pointer.y + 3, NSMaxY(bounds) - NSHeight(frame)));
++                    if (!NSEqualRects(frame, constrained)) [self setFrame:constrained display:NO];
++                    break;
++                }
++            }
+             [self orderBelow:prev orAbove:next activate:NO];
+         } copy];
+ 
+@@ -3600,7 +3615,7 @@
+  * front.
+  */
+ void macdrv_order_cocoa_window(macdrv_window w, macdrv_window p,
+-        macdrv_window n, bool activate, bool wait_for_paint, unsigned int paint_settle_ms)
++        macdrv_window n, bool activate, bool wait_for_paint, unsigned int paint_settle_ms, bool constrain_tip)
+ {
+     WineWindow* window = (WineWindow*)w;
+     WineWindow* prev = (WineWindow*)p;
+@@ -3608,7 +3623,7 @@
+ 
+     OnMainThreadAsync(^{
+         if (wait_for_paint && ![window isVisible])
+-            [window orderTooltipBelow:prev orAbove:next paintSettleMs:paint_settle_ms];
++            [window orderTooltipBelow:prev orAbove:next paintSettleMs:paint_settle_ms constrainTip:constrain_tip];
+         else
+             [window orderBelow:prev orAbove:next activate:activate];
+     });
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -503,7 +503,7 @@
+ extern void macdrv_set_cocoa_window_title(macdrv_window w, const UniChar* title,
+         size_t length);
+ extern void macdrv_order_cocoa_window(macdrv_window w, macdrv_window prev,
+-        macdrv_window next, bool activate, bool wait_for_paint, unsigned int paint_settle_ms);
++        macdrv_window next, bool activate, bool wait_for_paint, unsigned int paint_settle_ms, bool constrain_tip);
+ extern void macdrv_hide_cocoa_window(macdrv_window w);
+ extern void macdrv_set_cocoa_window_frame(macdrv_window w, const CGRect* new_frame);
+ extern void macdrv_get_cocoa_window_frame(macdrv_window w, CGRect* out_frame);

@@ -1,0 +1,179 @@
+--- a/dlls/winemac.drv/gdi.c
++++ b/dlls/winemac.drv/gdi.c
+@@ -231,6 +231,31 @@
+ }
+ 
+ 
++/* ScrollWindowEx moves the controls and then invalidates the page. Copying
++ * the shared backing bitmap can duplicate controls from the previous frame
++ * while the options page is processing a burst of wheel events. */
++static BOOL macdrv_ScrollDC(HDC hdc, INT dx, INT dy, HRGN update)
++{
++    RECT rect;
++    HWND hwnd, root;
++    WCHAR title[96];
++    static const WCHAR prefix[] = u"System Options - ";
++
++    if (macdrv_solidworks_process && update && dy && !dx &&
++        (hwnd = NtUserWindowFromDC(hdc)) && (root = NtUserGetAncestor(hwnd, GA_ROOT)) && root != hwnd &&
++        NtUserInternalGetWindowText(root, title, ARRAY_SIZE(title)) &&
++        !wcsncmp(title, prefix, ARRAY_SIZE(prefix) - 1))
++    {
++        TRACE("invalidating scrolled options page %p dx %d dy %d\n", hwnd, dx, dy);
++        NtUserInvalidateRect(hwnd, NULL, TRUE);
++        return TRUE;
++    }
++
++    NtGdiGetAppClipBox(hdc, &rect);
++    return NtGdiBitBlt(hdc, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
++                      hdc, rect.left - dx, rect.top - dy, SRCCOPY, 0, 0);
++}
++
+ static const struct user_driver_funcs macdrv_funcs =
+ {
+     .dc_funcs.pCreateCompatibleDC = macdrv_CreateCompatibleDC,
+@@ -258,6 +283,7 @@
+     .pMapVirtualKeyEx = macdrv_MapVirtualKeyEx,
+     .pProcessEvents = macdrv_ProcessEvents,
+     .pRegisterHotKey = macdrv_RegisterHotKey,
++    .pScrollDC = macdrv_ScrollDC,
+     .pSetCapture = macdrv_SetCapture,
+     .pSetCursor = macdrv_SetCursor,
+     .pSetCursorPos = macdrv_SetCursorPos,
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -39,6 +39,7 @@
+ 
+ 
+ extern BOOL allow_vsync;
++extern BOOL macdrv_solidworks_process;
+ extern BOOL allow_set_gamma;
+ extern BOOL allow_software_rendering;
+ 
+--- a/dlls/winemac.drv/macdrv_main.c
++++ b/dlls/winemac.drv/macdrv_main.c
+@@ -276,6 +276,8 @@
+  *
+  * Set up the Mac driver options.
+  */
++BOOL macdrv_solidworks_process;
++
+ static void setup_options(void)
+ {
+     static const WCHAR macdriverW[] = {'\\','M','a','c',' ','D','r','i','v','e','r',0};
+@@ -292,6 +294,7 @@
+     if ((p = wcsrchr(appname, '/'))) appname = p + 1;
+     if ((p = wcsrchr(appname, '\\'))) appname = p + 1;
+     len = lstrlenW(appname);
++    macdrv_solidworks_process = !wcsicmp(appname, u"sldworks.exe");
+ 
+     if (len && len < MAX_PATH)
+     {
+--- a/dlls/winemac.drv/surface.c
++++ b/dlls/winemac.drv/surface.c
+@@ -48,6 +48,7 @@
+     struct window_surface   header;
+     macdrv_window           window;
+     CGDataProviderRef       provider;
++    BOOL                    snapshot_updates;
+     struct list             present_entry;  /* in present_surfaces, for macdrv_flush_present_surface */
+ };
+ 
+@@ -91,13 +92,29 @@
+     CGImageAlphaInfo alpha_info = (window_surface->alpha_mask ? kCGImageAlphaPremultipliedFirst : kCGImageAlphaNoneSkipFirst);
+     CGColorSpaceRef colorspace;
+     CGImageRef image;
++    CGDataProviderRef provider = surface->provider;
+     struct macdrv_win_data *data;
++
++    if (surface->snapshot_updates)
++    {
++        CFDataRef snapshot;
++
++        /* The Cocoa view can draw asynchronously while GDI erases and
++         * repaints the options page. Publish an immutable copy. */
++        if (!(snapshot = CFDataCreate(kCFAllocatorDefault, color_bits, color_info->bmiHeader.biSizeImage)))
++            return FALSE;
++        provider = CGDataProviderCreateWithCFData(snapshot);
++        CFRelease(snapshot);
++        if (!provider) return FALSE;
++    }
+ 
+     colorspace = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+     image = CGImageCreate(color_info->bmiHeader.biWidth, abs(color_info->bmiHeader.biHeight), 8, 32,
+                           color_info->bmiHeader.biSizeImage / abs(color_info->bmiHeader.biHeight), colorspace,
+-                          alpha_info | kCGBitmapByteOrder32Little, surface->provider, NULL, retina_on, kCGRenderingIntentDefault);
++                          alpha_info | kCGBitmapByteOrder32Little, provider, NULL, retina_on, kCGRenderingIntentDefault);
+     CGColorSpaceRelease(colorspace);
++    if (provider != surface->provider) CGDataProviderRelease(provider);
++    if (!image) return FALSE;
+ 
+     macdrv_window_set_color_image(surface->window, image, cgrect_from_rect(*rect), cgrect_from_rect(*dirty));
+     CGImageRelease(image);
+@@ -173,7 +190,7 @@
+ /***********************************************************************
+  *              create_surface
+  */
+-static struct window_surface *create_surface(HWND hwnd, macdrv_window window, const RECT *rect)
++static struct window_surface *create_surface(HWND hwnd, macdrv_window window, const RECT *rect, BOOL snapshot_updates)
+ {
+     struct macdrv_window_surface *surface;
+     int width = rect->right - rect->left, height = rect->bottom - rect->top;
+@@ -225,6 +242,7 @@
+         surface = get_mac_surface(window_surface);
+         surface->window = window;
+         surface->provider = provider;
++        surface->snapshot_updates = snapshot_updates;
+         pthread_mutex_lock(&present_surfaces_lock);
+         list_add_tail(&present_surfaces, &surface->present_entry);
+         pthread_mutex_unlock(&present_surfaces_lock);
+@@ -241,6 +259,10 @@
+ {
+     struct window_surface *previous;
+     struct macdrv_win_data *data;
++    WCHAR title[96];
++    BOOL snapshot_updates = macdrv_solidworks_process &&
++        NtUserInternalGetWindowText(hwnd, title, ARRAY_SIZE(title)) &&
++        !wcsncmp(title, u"System Options - ", ARRAY_SIZE(u"System Options - ") - 1);
+ 
+     TRACE("hwnd %p, layered %u, surface_rect %s, surface %p\n", hwnd, layered, wine_dbgstr_rect(surface_rect), surface);
+ 
+@@ -254,7 +276,7 @@
+         data->ulw_layered = TRUE;
+     }
+ 
+-    *surface = create_surface(hwnd, data->cocoa_window, surface_rect);
++    *surface = create_surface(hwnd, data->cocoa_window, surface_rect, snapshot_updates);
+ 
+     release_win_data(data);
+     return TRUE;
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -637,7 +637,7 @@
+ /***********************************************************************
+  *              show_window
+  */
+-static BOOL get_tooltip_paint_delay(HWND hwnd, unsigned int *settle_ms)
++static BOOL get_popup_paint_delay(HWND hwnd, unsigned int *settle_ms)
+ {
+     WCHAR buffer[32];
+     UNICODE_STRING name = {0, sizeof(buffer), buffer};
+@@ -649,7 +649,8 @@
+         *settle_ms = 40;
+         return TRUE;
+     }
+-    return !wcsicmp(buffer, u"tooltips_class32");
++    return !wcsicmp(buffer, u"tooltips_class32") ||
++           (macdrv_solidworks_process && !wcsicmp(buffer, u"#32768"));
+ }
+ 
+ static void show_window(struct macdrv_win_data *data)
+@@ -682,7 +683,7 @@
+ 
+     if (!prev_window)
+         activate = activate_on_focus_time && (NtGetTickCount() - activate_on_focus_time < 2000);
+-    wait_for_paint = !activate && get_tooltip_paint_delay(data->hwnd, &settle_ms);
++    wait_for_paint = !activate && get_popup_paint_delay(data->hwnd, &settle_ms);
+     macdrv_order_cocoa_window(data->cocoa_window, prev_window, next_window, activate,
+                              wait_for_paint, settle_ms);
+     data->on_screen = TRUE;
