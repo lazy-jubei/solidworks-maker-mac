@@ -3,25 +3,29 @@
 set -eu
 source "${0:A:h}/env.sh"
 manager="$ROOT/scripts/tools/intel-renderer.py"
-if [[ "${SW_INTEL_ENHANCED_GRAPHICS:-0}" != 1 && ! -d "$WINEPREFIX/.sw-intel-renderer" ]]; then
-    exit 0
-fi
 server="$WINE_APP/Contents/Resources/wine/bin/wineserver"
-python3 "$ROOT/scripts/tools/require-stopped.py" "$server"
-if [[ "${SW_INTEL_ENHANCED_GRAPHICS:-0}" != 1 ]]; then
-    trap '"$server" -k 2>/dev/null || true; "$server" -w 2>/dev/null || true' EXIT
-    python3 "$manager" disable
+setting="${SW_INTEL_ENHANCED_GRAPHICS:-auto}"
+supported=0
+if [[ "$setting" != 0 ]] && (( ! SW_HOST_ARM64 )); then
+    macos_major="$(sw_vers -productVersion | cut -d. -f1)"
+    if (( macos_major >= 15 )); then
+        device=$(xcrun swift -e 'import Metal; print(MTLCreateSystemDefaultDevice()?.name ?? "")' 2>/dev/null) || device=
+        if [[ "$device" == AMD\ Radeon* ]]; then supported=1; fi
+    fi
+fi
+if (( ! supported )); then
+    if [[ "$setting" == 1 ]]; then
+        print -u2 'Enhanced Graphics requires an Intel Mac with an AMD Radeon default Metal device and macOS 15 or newer.'
+        exit 2
+    fi
+    if [[ -d "$WINEPREFIX/.sw-intel-renderer" ]]; then
+        python3 "$ROOT/scripts/tools/require-stopped.py" "$server"
+        trap '"$server" -k 2>/dev/null || true; "$server" -w 2>/dev/null || true' EXIT
+        python3 "$manager" disable
+    fi
     exit 0
 fi
-if (( SW_HOST_ARM64 )); then
-    print -u2 'The experimental Enhanced Graphics renderer is for Intel Macs.'
-    exit 2
-fi
-macos_major="$(sw_vers -productVersion | cut -d. -f1)"
-if (( macos_major < 15 )); then
-    print -u2 'The experimental Enhanced Graphics renderer requires macOS 15 or newer.'
-    exit 2
-fi
+python3 "$ROOT/scripts/tools/require-stopped.py" "$server"
 build="${SW_BUILD:-$VOL/build}"
 key=$(cat "$ROOT/scripts/build-intel-renderer.sh" "$ROOT"/scripts/patches/winemetalgl-*.patch | shasum -a 256 | cut -d ' ' -f 1)
 artifact="$build/intel-renderer-$key"

@@ -1,0 +1,103 @@
+--- a/src/core/surface.h
++++ b/src/core/surface.h
+@@ -90,6 +90,8 @@
+ 
+ private:
+     void allocate();
++    void fillResizeEdges(CommandStream& commands, id<MTLTexture> previous, MTLSize copied);
++    id<MTLRenderPipelineState> resizeEdgePipeline_ = nil;
+     struct Mailbox;
+     bool swapMailbox(CommandStream& stream);
+     void stopMailbox();
+--- a/src/core/surface.mm
++++ b/src/core/surface.mm
+@@ -228,6 +228,46 @@
+     }
+ }
+ 
++void Surface::fillResizeEdges(CommandStream& commands, id<MTLTexture> previous, MTLSize copied) {
++    const NSUInteger width = color_.width, height = color_.height;
++    if (!layer_ || color_.sampleCount != 1 || (copied.width == width && copied.height == height)) return;
++
++    if (!resizeEdgePipeline_) {
++        id<MTLLibrary> library = Device::get().utilityLibrary();
++        MTLRenderPipelineDescriptor* pipeline = [MTLRenderPipelineDescriptor new];
++        pipeline.vertexFunction = [library newFunctionWithName:@"wmgl_fullscreen_vs"];
++        pipeline.fragmentFunction = [library newFunctionWithName:@"wmgl_resize_edge_fs"];
++        pipeline.colorAttachments[0].pixelFormat = color_.pixelFormat;
++        NSError* error = nil;
++        resizeEdgePipeline_ = [Device::get().mtl() newRenderPipelineStateWithDescriptor:pipeline error:&error];
++        if (!resizeEdgePipeline_) {
++            WMGL_WARN(Surface, "resize edge pipeline: %s", error.localizedDescription.UTF8String);
++            return;
++        }
++    }
++
++    commands.endEncoder();
++    MTLRenderPassDescriptor* pass = [MTLRenderPassDescriptor renderPassDescriptor];
++    pass.colorAttachments[0].texture = color_;
++    pass.colorAttachments[0].loadAction = MTLLoadActionDontCare;
++    pass.colorAttachments[0].storeAction = MTLStoreActionStore;
++    id<MTLRenderCommandEncoder> encoder = [commands.commandBuffer() renderCommandEncoderWithDescriptor:pass];
++    [encoder setRenderPipelineState:resizeEdgePipeline_];
++    [encoder setFragmentTexture:previous atIndex:0];
++    const float params[4] = {};
++    [encoder setVertexBytes:params length:sizeof(params) atIndex:0];
++
++    if (copied.width < width) {
++        [encoder setScissorRect:MTLScissorRect{copied.width, 0, width - copied.width, height}];
++        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
++    }
++    if (copied.height < height) {
++        [encoder setScissorRect:MTLScissorRect{0, copied.height, copied.width, height - copied.height}];
++        [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
++    }
++    [encoder endEncoding];
++}
++
+ void Surface::resize(int width, int height, CommandStream* stream) {
+     width = std::max(1, width);
+     height = std::max(1, height);
+@@ -243,17 +283,18 @@
+     // swap that presents the frame drawn at the old size.
+     if (!oldColor || oldColor.sampleCount != color_.sampleCount) return;
+     const MTLSize size = MTLSizeMake(std::min(oldWidth, width_), std::min(oldHeight, height_), 1);
+-    auto copy = [&](id<MTLBlitCommandEncoder> blit) {
+-        [blit copyFromTexture:oldColor sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:size
++    auto copy = [&](CommandStream& commands) {
++        fillResizeEdges(commands, oldColor, size);
++        [commands.blit() copyFromTexture:oldColor sourceSlice:0 sourceLevel:0 sourceOrigin:MTLOriginMake(0, 0, 0) sourceSize:size
+                     toTexture:color_ destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+     };
+     if (stream) {
+-        copy(stream->blit());
++        copy(*stream);
+         return;
+     }
+     static Queue* queue = new Queue();
+     CommandStream own(*queue);
+-    copy(own.blit());
++    copy(own);
+     own.flush();
+ }
+ 
+--- a/src/core/metal/utility_shaders.h
++++ b/src/core/metal/utility_shaders.h
+@@ -32,6 +32,17 @@
+     return source.sample(s, in.uv);
+ }
+ 
++// Preserve texture pixel coordinates when extending a resized GL back buffer.
++fragment float4 wmgl_resize_edge_fs(FullscreenOut in [[stage_in]],
++                                   texture2d<float, access::read> previous [[texture(0)]]) {
++    const uint2 extent(previous.get_width(), previous.get_height());
++    const uint2 inset = min(extent / 4u, uint2(16u));
++    uint2 pixel = uint2(uint(in.position.x), uint(in.position.y));
++    if (pixel.x >= extent.x) pixel.x = extent.x - 1u - inset.x;
++    if (pixel.y >= extent.y) pixel.y = extent.y - 1u - inset.y;
++    return previous.read(pixel);
++}
++
+ // Clear one colour attachment to a value (used for clears that cannot be a load action).
+ struct ClearOut {
+     float4 position [[position]];

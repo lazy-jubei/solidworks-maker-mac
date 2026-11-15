@@ -60,19 +60,17 @@ startup have been tested on Intel. Fresh sign-in and Apple Silicon verification 
 To return to the current sign-in workaround, remove the setting and use the same Wine
 update option.
 
-### Experimental Enhanced Graphics on Intel Radeon
+### Enhanced Graphics on Intel Radeon
 
-On a test Intel Mac with a Radeon GPU and macOS 15 or newer, add
-`export SW_INTEL_ENHANCED_GRAPHICS=1` to `config.local.zsh` and choose the Wine
-update in the existing installer window. The installer builds WineMetalGL and
-places its OpenGL DLLs beside SolidWorks. The 3DEXPERIENCE launcher, browser and
-SolidWorks process monitor continue to use Wine's standard OpenGL. On the RX 6900 XT,
-the renderer supports an OpenGL 4.6 context. The packaged build has been verified
-through the vendor launch chain. Its desktop viewport still needs verification.
+On Intel Macs with macOS 15 or newer and an AMD Radeon default Metal device,
+the installer uses WineMetalGL by default and enables Enhanced Graphics Performance
+the first time it installs that renderer. The 3DEXPERIENCE launcher, browser and
+SolidWorks process monitor continue to use Wine's standard OpenGL. The installer
+keeps later changes you make to the Enhanced Graphics checkbox.
 
-To switch back, remove the setting and choose the same Wine update. The installer
-removes its DLLs and restores the previous Wine overrides. Your SolidWorks graphics
-preferences remain available in System Options.
+To switch back to Wine's standard renderer, set `SW_INTEL_ENHANCED_GRAPHICS=0`
+in `config.local.zsh` and choose the Wine update in the existing installer window.
+Apple Silicon keeps its current renderer while that configuration is being tested.
 
 ### Graphics performance
 

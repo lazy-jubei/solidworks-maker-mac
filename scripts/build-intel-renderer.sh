@@ -44,6 +44,7 @@ export PATH="$mingw_bin:$PATH"
     cd "$source_dir"
     git apply "$patches/winemetalgl-radeon.patch"
     git apply "$patches/winemetalgl-early-drawable.patch"
+    git apply "$patches/winemetalgl-resize-edge-fill.patch"
     cmake --preset release
     cmake --build --preset release --target winemetalgl_core --parallel 4
     sh scripts/build-wine-module.sh "$scratch/wine" "$scratch/module"
