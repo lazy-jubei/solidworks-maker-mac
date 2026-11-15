@@ -1,0 +1,125 @@
+--- a/src/wine/include/wmgl_wine.h
++++ b/src/wine/include/wmgl_wine.h
+@@ -90,6 +90,7 @@
+ struct wmgl_place_window_params
+ {
+     struct wmgl_window_placement window;
++    UINT resize_drawable;
+ };
+ 
+ struct wmgl_init_params
+--- a/src/wine/pe/winemetalgl.c
++++ b/src/wine/pe/winemetalgl.c
+@@ -52,6 +52,7 @@
+ {
+     HGLRC context;
+     HDC draw, read;
++    UINT drawable_width, drawable_height;
+     HGLRC extensions_context;  /* the context `extensions` lists the GL extensions of */
+     char *extensions;
+     struct batch *batch;
+@@ -98,6 +99,8 @@
+ #define GL_DEBUG_OUTPUT_SYNCHRONOUS 0x8242
+ #endif
+ static BOOL batching = TRUE, batching_allowed = TRUE, debug_callback, debug_synchronous;
++
++static void sync_viewport_drawable( const struct glViewport_params *viewport );
+ 
+ static void note_call( unsigned int code, const void *args )
+ {
+@@ -136,6 +139,7 @@
+     BYTE *at;
+ 
+     note_call( code, args );
++    if (code == unix_glViewport) sync_viewport_drawable( args );
+     /* Large or missing data (the core reports the error) is passed as is. */
+     if (!batching || data_size > BATCH_BYTES || (data_size && !data)) return FALSE;
+     record_size = sizeof(struct wmgl_batch_record) + params_size + (((size_t)data_size + 7) & ~(size_t)7);
+@@ -594,7 +598,7 @@
+ static void CALLBACK child_window_event( HWINEVENTHOOK hook, DWORD event, HWND hwnd, LONG object, LONG child,
+                                          DWORD thread, DWORD time )
+ {
+-    struct wmgl_place_window_params params;
++    struct wmgl_place_window_params params = {0};
+     HWND parent;
+ 
+     if (object != OBJID_WINDOW || child != CHILDID_SELF || !hwnd) return;
+@@ -621,7 +625,7 @@
+     static INIT_ONCE watching = INIT_ONCE_STATIC_INIT;
+     HWND hwnd;
+ 
+-    struct wmgl_place_window_params params;
++    struct wmgl_place_window_params params = {0};
+     HWND parent;
+ 
+     memset( placement, 0, sizeof(*placement) );
+@@ -638,6 +642,36 @@
+         wmgl_unix_call( unix_wmgl_place_window, &params );
+     }
+     hwnd_placement( hwnd, NULL, hdc, placement );
++}
++
++/* Some apps resize the full viewport while leaving the context current.
++ * Update the matching drawable before executing commands for that viewport. */
++static void sync_viewport_drawable( const struct glViewport_params *viewport )
++{
++    struct thread_state *state = thread_state( FALSE );
++    struct wmgl_place_window_params params = {0};
++    static LONG enabled;
++    LONG mode = InterlockedCompareExchange( &enabled, 0, 0 );
++    if (!mode)
++    {
++        WCHAR value[2];
++        mode = GetEnvironmentVariableW( L"SW_TEST_SYNC_VIEWPORT_DRAWABLE", value, ARRAYSIZE(value) ) == 1 &&
++               value[0] == '1' ? 1 : -1;
++        InterlockedCompareExchange( &enabled, mode, 0 );
++    }
++    if (mode < 0 || !state || !state->draw || viewport->x || viewport->y ||
++        viewport->width < 1 || viewport->height < 1 ||
++        (state->drawable_width == (UINT)viewport->width && state->drawable_height == (UINT)viewport->height))
++        return;
++    window_placement( state->draw, &params.window );
++    if (!params.window.hwnd || (UINT)params.window.width != (UINT)viewport->width ||
++        (UINT)params.window.height != (UINT)viewport->height) return;
++    params.resize_drawable = TRUE;
++    if (!wmgl_unix_call( unix_wmgl_place_window, &params ))
++    {
++        state->drawable_width = params.window.width;
++        state->drawable_height = params.window.height;
++    }
+ }
+ 
+ /* ------------------------------------------------------------ contexts */
+@@ -700,6 +734,8 @@
+     state->context = context;
+     state->draw = context ? draw : 0;
+     state->read = context ? read : 0;
++    state->drawable_width = params.draw.width;
++    state->drawable_height = params.draw.height;
+     return TRUE;
+ }
+ 
+@@ -808,6 +844,12 @@
+     if (!(InterlockedIncrement( (LONG *)&window_checks ) % 64)) forget_destroyed_windows();
+     window_placement( hdc, &params.window );
+     if (wmgl_unix_call( unix_wmgl_swap_buffers, &params )) return FALSE;
++    struct thread_state *state = thread_state( FALSE );
++    if (params.ret && state && hdc == state->draw)
++    {
++        state->drawable_width = params.window.width;
++        state->drawable_height = params.window.height;
++    }
+     return params.ret;
+ }
+ 
+--- a/src/wine/unix/unix_wgl.c
++++ b/src/wine/unix/unix_wgl.c
+@@ -667,6 +667,8 @@
+                     params->window.hole_count );
+         to_placement( &params->window, &where );
+         wmgl_window_place( window->host, &where );
++        if (params->resize_drawable && current_draw == window->surface)
++            window_resize( &params->window );
+     }
+     pthread_mutex_unlock( &wgl_lock );
+     return STATUS_SUCCESS;

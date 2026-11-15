@@ -19,6 +19,9 @@ Existing upstream copyright and license notices remain applicable.
 - DXMT v0.80: https://github.com/3Shain/dxmt — LGPL-2.1-or-later. Downloaded at
   setup time; not redistributed in this release. install-dxmt.sh changes only
   one byte of its Wine loader marker for browser-local loading.
+- WineMetalGL 3.9.0: https://github.com/metalsharp/WineMetalGL — LGPL-3.0-or-later.
+  The experimental Intel renderer builder downloads its pinned source. Files derived
+  from Wine and bundled dependencies retain their upstream licenses.
 - LLVM-MinGW, winetricks and Chrome for Testing are downloaded from their upstream
   distributions; their licenses and notices apply to those downloads.
 

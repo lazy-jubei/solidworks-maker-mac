@@ -1,0 +1,594 @@
+# Locally tested SolidWorks changes against WineMetalGL 3.9.0.
+# Original licenses apply to each modified file.
+
+--- a/src/core/api/blit.mm
++++ b/src/core/api/blit.mm
+@@ -235,9 +235,10 @@
+                                                                                     width:static_cast<NSUInteger>(w)
+                                                                                    height:static_cast<NSUInteger>(h)
+                                                                                 mipmapped:NO];
+-    desc.storageMode = MTLStorageModeShared;
++    id<MTLDevice> device = Device::get().mtl();
++    desc.storageMode = [device supportsFamily:MTLGPUFamilyApple1] ? MTLStorageModeShared : MTLStorageModeManaged;
+     desc.usage = MTLTextureUsageShaderRead;
+-    id<MTLTexture> texture = [Device::get().mtl() newTextureWithDescriptor:desc];
++    id<MTLTexture> texture = [device newTextureWithDescriptor:desc];
+     [texture replaceRegion:MTLRegionMake2D(0, 0, w, h) mipmapLevel:0 withBytes:values.data()
+                bytesPerRow:static_cast<NSUInteger>(w) * 2];
+     RenderTargetDesc target;
+--- /dev/null
++++ b/src/core/api/capability.h
+@@ -0,0 +1,11 @@
++#pragma once
++
++#include "core/gl/types.h"
++
++namespace wmgl {
++class Context;
++
++namespace api {
++bool getCapability(Context& ctx, GLenum cap, bool& value);
++}
++}
+--- a/src/core/api/fixed_raster.mm
++++ b/src/core/api/fixed_raster.mm
+@@ -435,11 +435,10 @@
+         tex = temporaryTexture(ctx, [&] {
+             TexImage2D(ctx, GL_TEXTURE_2D, 0, static_cast<GLint>(internal), width, height, 0, format, type, pixels);
+         });
+-        if (const GLenum texError = ctx.takeError()) {
+-            ctx.setError(error ? error : texError);  // the format/type errors of glTexImage2D apply
+-            return;
+-        }
+-        if (error) ctx.setError(error);
++        const GLenum texError = ctx.takeError();
++        ctx.restoreError(texError);
++        ctx.restoreError(error);
++        if (texError) return;  // the format/type errors of glTexImage2D apply
+         if (cacheable) {
+             if (ctx.pixelRectangleCache.size() >= 512) ctx.pixelRectangleCache.clear();
+             ctx.pixelRectangleCache.emplace(key, tex);
+--- a/src/core/api/get.mm
++++ b/src/core/api/get.mm
+@@ -4,6 +4,7 @@
+ #include <cmath>
+ #include <cstring>
+ 
++#include "core/api/capability.h"
+ #include "core/compat/compat_api.h"
+ #include "core/compat/fixed_function.h"
+ #include "core/context.h"
+@@ -736,12 +737,9 @@
+         return true;
+     }
+     // Capabilities can be queried with glGet as well.
+-    const GLenum before = ctx.takeError();
+-    const GLboolean enabled = IsEnabled(ctx, pname);
+-    const GLenum error = ctx.takeError();
+-    if (before) ctx.setError(before);
+-    if (error) return false;
+-    out = bools({enabled == GL_TRUE});
++    bool enabled = false;
++    if (!getCapability(ctx, pname, enabled)) return false;
++    out = bools({enabled});
+     return true;
+ }
+ 
+--- a/src/core/api/state.mm
++++ b/src/core/api/state.mm
+@@ -5,6 +5,7 @@
+ #include <cstdlib>
+ #include <string>
+ 
++#include "core/api/capability.h"
+ #include "core/compat/compat_api.h"
+ #include "core/context.h"
+ #include "core/draw.h"
+@@ -114,6 +115,8 @@
+     return setFixedCapability(ctx, cap, on);
+ }
+ 
++}  // namespace
++
+ bool getCapability(Context& ctx, GLenum cap, bool& value) {
+     const ContextState& s = ctx.state;
+     if (ctx.isEs() && !esCapability(ctx, cap)) return false;
+@@ -160,8 +163,6 @@
+     }
+     return getFixedCapability(ctx, cap, value) || getClientCapability(ctx, cap, value);
+ }
+-
+-}  // namespace
+ 
+ void Enable(Context& ctx, GLenum cap) {
+     if (!setCapability(ctx, cap, true)) ctx.setError(GL_INVALID_ENUM);
+--- a/src/core/context.h
++++ b/src/core/context.h
+@@ -67,6 +67,8 @@
+     // --- errors and diagnostics
+     void setError(GLenum error);
+     GLenum takeError();
++    // Restore an error saved across an internal call without reporting it again.
++    void restoreError(GLenum error) { if (error != GL_NO_ERROR) error_ = error; }
+     void unimplemented(const char* command);
+     void debugMessage(GLenum source, GLenum type, GLuint id, GLenum severity, const std::string& message);
+ 
+--- a/src/core/draw.h
++++ b/src/core/draw.h
+@@ -291,6 +291,7 @@
+         NSUInteger offset = 0;
+         std::vector<std::pair<id<MTLBuffer>, bool>> resources;  // buffer, written
+     };
++    StorageArguments storageScratch_;  // reused by the synchronous storage binders
+     // `stage`'s storage block arguments index `owner`'s storage blocks.
+     bool storageArguments(const shader::StageOutput& stage, const Program* owner, StorageArguments& out);
+     void bindStorageBlocks(id<MTLRenderCommandEncoder> encoder, LinkedProgram& program, int s);
+--- a/src/core/draw.mm
++++ b/src/core/draw.mm
+@@ -1475,7 +1475,10 @@
+     const uint64_t serial = ctx_.stream().serial();
+     // Layout (shader/compiler.h): n device pointers, the pointer to the
+     // sizes, then the n sizes in bytes.
+-    TransientAllocation alloc = transient_.allocate((n + 1) * 8 + n * 4, serial, 16);
++    // Discrete Metal drivers can require a larger argument-buffer offset alignment.
++    static const size_t alignment = [Device::get().mtl() supportsFamily:MTLGPUFamilyApple1] ? 16 : 256;
++    TransientAllocation alloc = transient_.allocate((n + 1) * 8 + n * 4, serial, alignment);
++    if (!alloc.data) return false;
+     uint64_t* pointers = static_cast<uint64_t*>(alloc.data);
+     uint32_t* sizes = reinterpret_cast<uint32_t*>(pointers + n + 1);
+     out.resources.clear();
+@@ -1519,12 +1522,13 @@
+ }
+ 
+ void DrawState::bindStorageBlocks(id<MTLRenderCommandEncoder> encoder, LinkedProgram& program, int s) {
+-    StorageArguments args;
++    StorageArguments& args = storageScratch_;
+     if (!storageArguments(program.link.stages[s], stageProgram(program, s), args)) return;
+     const bool vertex = s == static_cast<int>(Stage::Vertex);
+     const MTLRenderStages stages = vertex ? MTLRenderStageVertex : MTLRenderStageFragment;
+     for (const auto& [buffer, writes] : args.resources)
+         [encoder useResource:buffer usage:writes ? MTLResourceUsageRead | MTLResourceUsageWrite : MTLResourceUsageRead stages:stages];
++    args.resources.clear();  // release resources, retain allocation
+     if (vertex) {
+         [encoder setVertexBuffer:args.buffer offset:args.offset atIndex:shader::kSlotStorageBlocks];
+         // A vertex buffer slot when no storage blocks take it (vertexBufferSlots).
+@@ -1536,20 +1540,22 @@
+ }
+ 
+ void DrawState::bindStorageBlocks(id<MTLComputeCommandEncoder> encoder, const shader::StageOutput& stage, const Program* owner) {
+-    StorageArguments args;
++    StorageArguments& args = storageScratch_;
+     if (!storageArguments(stage, owner, args)) return;
+     for (const auto& [buffer, writes] : args.resources)
+         [encoder useResource:buffer usage:writes ? MTLResourceUsageRead | MTLResourceUsageWrite : MTLResourceUsageRead];
++    args.resources.clear();  // release resources, retain allocation
+     [encoder setBuffer:args.buffer offset:args.offset atIndex:shader::kSlotStorageBlocks];
+ }
+ 
+ void DrawState::bindStorageBlocks(id<MTLRenderCommandEncoder> encoder, const shader::StageOutput& stage, const Program* owner) {
+-    StorageArguments args;
++    StorageArguments& args = storageScratch_;
+     if (!storageArguments(stage, owner, args)) return;
+     for (const auto& [buffer, writes] : args.resources)
+         [encoder useResource:buffer
+                        usage:writes ? MTLResourceUsageRead | MTLResourceUsageWrite : MTLResourceUsageRead
+                       stages:MTLRenderStageVertex];
++    args.resources.clear();  // release resources, retain allocation
+     [encoder setVertexBuffer:args.buffer offset:args.offset atIndex:shader::kSlotStorageBlocks];
+ }
+ 
+@@ -4548,7 +4554,7 @@
+             elementBuffer->indexLists.clear();
+             elementBuffer->indexListsVersion = elementBuffer->version;
+         }
+-        std::vector<uint64_t> key = {static_cast<uint64_t>(offset), static_cast<uint64_t>(count), type, mode,
++        const std::array<uint64_t, 6> key = {static_cast<uint64_t>(offset), static_cast<uint64_t>(count), type, mode,
+                                      rotate ? 1u : 0u, restart ? uint64_t{restartIndex} : ~0ull};
+         auto it = elementBuffer->indexLists.find(key);
+         if (it == elementBuffer->indexLists.end()) {
+@@ -4569,7 +4575,7 @@
+                 entry->bytes = bytes;
+                 Buffer::convertedBytes() += bytes;
+             }
+-            it = elementBuffer->indexLists.emplace(std::move(key), std::move(entry)).first;
++            it = elementBuffer->indexLists.emplace(key, std::move(entry)).first;
+         }
+         const Buffer::ConvertedVertices& list = *it->second;
+         if (list.bytes)
+--- a/src/core/metal/queue.mm
++++ b/src/core/metal/queue.mm
+@@ -40,7 +40,10 @@
+ // Each encoder's state is recorded (at some cost) when GPU errors are logged
+ // in detail: WINEMETALGL_LOG=gpu:2.
+ bool detailedErrors() {
+-    static const bool detailed = logEnabled(LogLevel::Info, LogCategory::Gpu);
++    // The Radeon driver can fail command buffers with encoder status enabled.
++    // Preserve GPU error logging on that driver without requesting the status.
++    static const bool detailed = logEnabled(LogLevel::Info, LogCategory::Gpu) &&
++        ![Device::get().mtl().name hasPrefix:@"AMD Radeon"];
+     return detailed;
+ }
+ 
+--- a/src/core/objects.h
++++ b/src/core/objects.h
+@@ -144,7 +144,7 @@
+     // drawElements' rewritten index lists of ranges of this element buffer
+     // (draw.mm), valid while `version` is `indexListsVersion`: by offset,
+     // count, type, mode, rotation and restart index; 32-bit indices.
+-    std::map<std::vector<uint64_t>, std::unique_ptr<ConvertedVertices>> indexLists;
++    std::map<std::array<uint64_t, 6>, std::unique_ptr<ConvertedVertices>> indexLists;
+     uint64_t indexListsVersion = 0;
+     // DrawState::drawIndirect's scans for 16-bit and 32-bit indices of the
+     // largest value (where Metal always restarts strips), valid
+--- a/src/core/program.mm
++++ b/src/core/program.mm
+@@ -85,8 +85,9 @@
+ };
+ 
+ FunctionCache& functionCache() {
+-    static FunctionCache cache;
+-    return cache;
++    // Prewarm jobs can still use the cache during process teardown.
++    static FunctionCache* const cache = new FunctionCache;
++    return *cache;
+ }
+ 
+ id<MTLFunction> compileFunctionUncached(const std::string& msl, const std::string& entryPoint, int stage);
+--- a/src/core/texture_storage.mm
++++ b/src/core/texture_storage.mm
+@@ -855,15 +855,17 @@
+     desc.textureType = type;
+     desc.pixelFormat = format;
+     desc.width = desc.height = 1;
+-    desc.storageMode = MTLStorageModeShared;
++    // Discrete macOS GPUs require managed storage for CPU-written textures.
++    id<MTLDevice> device = Device::get().mtl();
++    desc.storageMode = [device supportsFamily:MTLGPUFamilyApple1] ? MTLStorageModeShared : MTLStorageModeManaged;
+     if (type == MTLTextureType2DMultisample || type == MTLTextureType2DMultisampleArray) {
+         desc.sampleCount = 4;
+         desc.storageMode = MTLStorageModePrivate;
+         desc.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
+     }
+     if (format == MTLPixelFormatDepth32Float) desc.storageMode = MTLStorageModePrivate;
+-    id<MTLTexture> texture = [Device::get().mtl() newTextureWithDescriptor:desc];
+-    if (desc.storageMode == MTLStorageModeShared) {
++    id<MTLTexture> texture = [device newTextureWithDescriptor:desc];
++    if (desc.storageMode != MTLStorageModePrivate) {
+         const NSUInteger slices = type == MTLTextureTypeCube ? 6 : 1;
+         uint8_t texel[16] = {};
+         if (format == MTLPixelFormatRGBA8Unorm) texel[3] = 255;
+--- a/src/wine/pe/wgl_formats.c
++++ b/src/wine/pe/wgl_formats.c
+@@ -702,6 +702,29 @@
+         compare_formats_ctx_set_attrib( &ctx, attribs_float[i], attribs_float[i + 1] );
+     }
+ 
++    /* SolidWorks' enhanced viewport requests legacy accumulation and a
++     * copy swap method. Test whether its renderer actually uses either. */
++    const char *fallback = getenv( "WINEMETALGL_SW_FORMAT_FALLBACK" );
++    if (fallback && !strcmp( fallback, "1" ) && ctx.num_attribs == 18 &&
++        attribs_int && attribs_int[24] == WGL_ACCUM_BITS_ARB &&
++        attribs_int[25] == 32 && attribs_int[34] == WGL_SWAP_METHOD_ARB &&
++        attribs_int[35] == WGL_SWAP_COPY_ARB)
++    {
++        for (i = 0; i < ctx.num_attribs; ++i)
++        {
++            switch (ctx.attribs[2 * i])
++            {
++                case WGL_ACCUM_BITS_ARB: case WGL_ACCUM_RED_BITS_ARB:
++                case WGL_ACCUM_GREEN_BITS_ARB: case WGL_ACCUM_BLUE_BITS_ARB:
++                    ctx.attribs[2 * i + 1] = 0;
++                    break;
++                case WGL_SWAP_METHOD_ARB:
++                    ctx.attribs[2 * i + 1] = WGL_SWAP_UNDEFINED_ARB;
++                    break;
++            }
++        }
++    }
++
+     /* Initialize the format_array with (pointers to) all wgl formats */
+     format_array = malloc( num_wgl_formats * sizeof(*format_array) );
+     if (!format_array) return FALSE;
+--- a/src/wine/pe/winemetalgl.c
++++ b/src/wine/pe/winemetalgl.c
+@@ -458,14 +458,75 @@
+     return found;
+ }
+ 
++static void add_window_hole( HWND hwnd, HWND top_level, const RECT *clip,
++                             struct wmgl_window_placement *placement )
++{
++    struct wmgl_rect *hole;
++    RECT rect;
++
++    if (placement->hole_count == WMGL_MAX_HOLES || !IsWindowVisible( hwnd ) || is_tracked( hwnd ) ||
++        !GetWindowRect( hwnd, &rect )) return;
++    MapWindowPoints( HWND_DESKTOP, top_level, (POINT *)&rect, 2 );
++    if (!IntersectRect( &rect, &rect, clip )) return;
++    hole = &placement->holes[placement->hole_count++];
++    hole->x = rect.left;
++    hole->y = rect.top;
++    hole->width = rect.right - rect.left;
++    hole->height = rect.bottom - rect.top;
++}
++
++static BOOL CALLBACK init_sibling_clipping( INIT_ONCE *once, void *param, void **context )
++{
++    char value[2];
++    *(BOOL *)param = GetEnvironmentVariableA( "WINEMETALGL_CLIP_SIBLINGS", value, sizeof(value) ) == 1 &&
++                    value[0] == '1';
++    return TRUE;
++}
++
++/* Prefer Wine's computed system clipping to repeated sibling queries.
++ * The system region is in screen coordinates and excludes higher GDI panes. */
++static BOOL dc_clip_holes( HDC dc, HWND top_level, const RECT *clip,
++                           struct wmgl_window_placement *placement )
++{
++    char buffer[sizeof(RGNDATAHEADER) + WMGL_MAX_HOLES * sizeof(RECT)] __attribute__((aligned(8)));
++    RGNDATA *data = (RGNDATA *)buffer;
++    HRGN visible = CreateRectRgn( 0, 0, 0, 0 ), hidden = NULL;
++    POINT origin = {0};
++    BOOL ok = FALSE;
++    RECT *rect;
++    unsigned int i;
++
++    if (!visible || GetRandomRgn( dc, visible, 4 /* SYSRGN */ ) != 1) goto done;
++    MapWindowPoints( top_level, HWND_DESKTOP, &origin, 1 );
++    if (!OffsetRgn( visible, -origin.x, -origin.y )) goto done;
++    if (!(hidden = CreateRectRgnIndirect( clip ))) goto done;
++    if (!CombineRgn( hidden, hidden, visible, RGN_DIFF ) ||
++        !GetRegionData( hidden, sizeof(buffer), data )) goto done;
++    rect = (RECT *)data->Buffer;
++    for (i = 0; i < data->rdh.nCount; ++i)
++    {
++        struct wmgl_rect *hole = &placement->holes[placement->hole_count++];
++        hole->x = rect[i].left;
++        hole->y = rect[i].top;
++        hole->width = rect[i].right - rect[i].left;
++        hole->height = rect[i].bottom - rect[i].top;
++    }
++    ok = TRUE;
++done:
++    if (hidden) DeleteObject( hidden );
++    if (visible) DeleteObject( visible );
++    return ok;
++}
++
+ /* Where a window is (wmgl_window_placement), in pixels no DPI awareness
+  * has scaled; `gone`, a child window going away, makes no hole. */
+-static void hwnd_placement( HWND hwnd, HWND gone, struct wmgl_window_placement *placement )
++static void hwnd_placement( HWND hwnd, HWND gone, HDC dc, struct wmgl_window_placement *placement )
+ {
+     DPI_AWARENESS_CONTEXT awareness;
+-    HWND top_level, parent, child;
+-    RECT client = {0}, around = {0}, clip, shown, rect;
+-    struct wmgl_rect *hole;
++    static INIT_ONCE clipping_init = INIT_ONCE_STATIC_INIT;
++    static BOOL clip_siblings;
++    HWND top_level, parent, child, ancestor, sibling;
++    RECT client = {0}, around = {0}, clip, shown;
+ 
+     memset( placement, 0, sizeof(*placement) );
+     awareness = SetThreadDpiAwarenessContext( DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 );
+@@ -497,21 +558,31 @@
+     placement->clip_width = clip.right - clip.left;
+     placement->clip_height = clip.bottom - clip.top;
+     placement->visible = IsWindowVisible( hwnd );
++    InitOnceExecuteOnce( &clipping_init, init_sibling_clipping, &clip_siblings, NULL );
++    if (clip_siblings && dc && dc_clip_holes( dc, top_level, &clip, placement ))
++    {
++        SetThreadDpiAwarenessContext( awareness );
++        return;
++    }
+     /* Child windows a window with a pixel format clips out (on Windows, by
+      * WS_CLIPCHILDREN, which such a window needs), but whose drawables have
+      * layers of their own. */
+     for (child = GetWindow( hwnd, GW_CHILD ); child && placement->hole_count < WMGL_MAX_HOLES;
+          child = GetWindow( child, GW_HWNDNEXT ))
+     {
+-        if (child == gone || !IsWindowVisible( child ) || is_tracked( child )) continue;
+-        GetWindowRect( child, &rect );
+-        MapWindowPoints( HWND_DESKTOP, top_level, (POINT *)&rect, 2 );
+-        if (!IntersectRect( &rect, &rect, &clip )) continue;
+-        hole = &placement->holes[placement->hole_count++];
+-        hole->x = rect.left;
+-        hole->y = rect.top;
+-        hole->width = rect.right - rect.left;
+-        hole->height = rect.bottom - rect.top;
++        if (child != gone) add_window_hole( child, top_level, &clip, placement );
++    }
++    /* The Cocoa fallback sits above Wine's GDI surface. Leave space for
++     * overlapping panels above the drawable or any of its child ancestors. */
++    for (ancestor = hwnd; clip_siblings && ancestor && ancestor != top_level &&
++         placement->hole_count < WMGL_MAX_HOLES; ancestor = GetAncestor( ancestor, GA_PARENT ))
++    {
++        for (sibling = GetWindow( ancestor, GW_HWNDPREV ); sibling &&
++             placement->hole_count < WMGL_MAX_HOLES; sibling = GetWindow( sibling, GW_HWNDPREV ))
++        {
++            if (!(GetWindowLongW( sibling, GWL_EXSTYLE ) & WS_EX_TRANSPARENT))
++                add_window_hole( sibling, top_level, &clip, placement );
++        }
+     }
+     SetThreadDpiAwarenessContext( awareness );
+ }
+@@ -529,7 +600,7 @@
+     if (object != OBJID_WINDOW || child != CHILDID_SELF || !hwnd) return;
+     if (!(GetWindowLongW( hwnd, GWL_STYLE ) & WS_CHILD) || !(parent = GetAncestor( hwnd, GA_PARENT ))) return;
+     if (!is_tracked( parent )) return;
+-    hwnd_placement( parent, event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_DESTROY ? hwnd : NULL, &params.window );
++    hwnd_placement( parent, event == EVENT_OBJECT_HIDE || event == EVENT_OBJECT_DESTROY ? hwnd : NULL, NULL, &params.window );
+     wmgl_unix_call( unix_wmgl_place_window, &params );
+ }
+ 
+@@ -563,10 +634,10 @@
+     if (track_window( hwnd ) && (GetWindowLongW( hwnd, GWL_STYLE ) & WS_CHILD) &&
+         (parent = GetAncestor( hwnd, GA_PARENT )) && is_tracked( parent ))
+     {
+-        hwnd_placement( parent, NULL, &params.window );
++        hwnd_placement( parent, NULL, NULL, &params.window );
+         wmgl_unix_call( unix_wmgl_place_window, &params );
+     }
+-    hwnd_placement( hwnd, NULL, placement );
++    hwnd_placement( hwnd, NULL, hdc, placement );
+ }
+ 
+ /* ------------------------------------------------------------ contexts */
+--- a/src/wine/unix/unix_window.m
++++ b/src/wine/unix/unix_window.m
+@@ -16,6 +16,8 @@
+ #import <Metal/Metal.h>
+ #import <QuartzCore/QuartzCore.h>
+ #include <dlfcn.h>
++#include <stdlib.h>
++#include <string.h>
+ #include <objc/message.h>
+ #include <objc/runtime.h>
+ 
+@@ -145,12 +147,15 @@
+     struct wmgl_hole shown[WMGL_WINDOW_MAX_HOLES];
+     uint32_t i, count = 0;
+     int waiting = 0;
++    const char *clip_siblings = getenv( "WINEMETALGL_CLIP_SIBLINGS" );
++    const BOOL immediate = clip_siblings && !strcmp( clip_siblings, "1" );
+     CAShapeLayer *mask;
+-    CGMutablePathRef path;
++    CGMutablePathRef holes_path;
++    CGPathRef bounds_path, mask_path;
+ 
+     for (i = 0; i < placement->hole_count && i < WMGL_WINDOW_MAX_HOLES; i++)
+     {
+-        if (host->hole_wait == 2 || has_hole( host->holes, host->hole_count, &placement->holes[i] ))
++        if (immediate || host->hole_wait == 2 || has_hole( host->holes, host->hole_count, &placement->holes[i] ))
+             shown[count++] = placement->holes[i];
+         else
+             waiting = 1;
+@@ -174,21 +179,23 @@
+         host->layer.mask = nil;
+     else
+     {
+-        path = CGPathCreateMutable();
+-        CGPathAddRect( path, NULL, bounds );
++        holes_path = CGPathCreateMutable();
+         for (i = 0; i < count; i++)
+         {
+             const struct wmgl_hole *hole = &shown[i];
+             NSRect rect = content_rect( content, placement, hole->x, hole->y, hole->width, hole->height );
+             /* The layer's geometry is its (unflipped) view's. */
+-            CGPathAddRect( path, NULL, NSRectToCGRect( [host->view convertRect:rect fromView:content] ) );
++            CGPathAddRect( holes_path, NULL, NSRectToCGRect( [host->view convertRect:rect fromView:content] ) );
+         }
+         mask = [CAShapeLayer layer];
+         mask.frame = bounds;
+-        mask.path = path;
+-        mask.fillRule = kCAFillRuleEvenOdd;
++        bounds_path = CGPathCreateWithRect( bounds, NULL );
++        mask_path = CGPathCreateCopyBySubtractingPath( bounds_path, holes_path, false );
++        mask.path = mask_path;
+         host->layer.mask = mask;
+-        CGPathRelease( path );
++        if (mask_path) CGPathRelease( mask_path );
++        CGPathRelease( bounds_path );
++        CGPathRelease( holes_path );
+     }
+     [CATransaction commit];
+ }
+--- a/tests/gpu/compat_tests.cpp
++++ b/tests/gpu/compat_tests.cpp
+@@ -586,7 +586,12 @@
+     }
+     glWindowPos2i(40, 40);
+     glPixelZoom(2, 2);
++    glEnable(GL_DEBUG_OUTPUT);
++    glEnable(0xFFFFFFFFu);
+     glDrawPixels(4, 4, GL_RGBA, GL_UNSIGNED_BYTE, image);
++    CHECK_EQ(glGetError(), static_cast<GLenum>(GL_INVALID_ENUM));
++    CHECK_EQ(glGetDebugMessageLog(8, 0, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr), 1u);
++    glDisable(GL_DEBUG_OUTPUT);
+     glPixelZoom(1, 1);
+     CHECK(pixel(41, 41, kBlue));
+     CHECK(pixel(47, 47, kBlue));
+--- a/tests/gpu/debug_tests.cpp
++++ b/tests/gpu/debug_tests.cpp
+@@ -65,3 +65,26 @@
+     glDisable(GL_DEBUG_OUTPUT);
+     CHECK_GL();
+ }
++
++GPU_TEST(gpu_get_capability_error_state) {
++    std::vector<Received> got;
++    glEnable(GL_DEBUG_OUTPUT);
++    glDebugMessageCallback(callback, &got);
++    glEnable(GL_DEPTH_TEST);
++    glEnable(0xFFFFFFFFu);
++
++    GLint depth = 0;
++    glGetIntegerv(GL_DEPTH_TEST, &depth);
++    CHECK_EQ(depth, 1);
++    CHECK_EQ(got.size(), static_cast<size_t>(1));
++    CHECK_EQ(glGetError(), static_cast<GLenum>(GL_INVALID_ENUM));
++
++    glGetIntegerv(0xFFFFFFFFu, &depth);
++    CHECK_EQ(depth, 1);
++    CHECK_EQ(got.size(), static_cast<size_t>(2));
++    CHECK_EQ(glGetError(), static_cast<GLenum>(GL_INVALID_ENUM));
++
++    glDebugMessageCallback(nullptr, nullptr);
++    glDisable(GL_DEBUG_OUTPUT);
++    CHECK_GL();
++}
+--- a/tests/gpu/texture_tests.cpp
++++ b/tests/gpu/texture_tests.cpp
+@@ -556,3 +556,17 @@
+     glDeleteProgram(p);
+     CHECK_GL();
+ }
++
++GPU_TEST(gpu_texture_incomplete_sampler_reads_opaque_black) {
++    const char* fs = R"(#version 330 core
++in vec2 uv; uniform sampler2D tex; out vec4 o;
++void main() { o = texture(tex, uv); })";
++    GLuint tex = 0;
++    glActiveTexture(GL_TEXTURE0);
++    glGenTextures(1, &tex);
++    glBindTexture(GL_TEXTURE_2D, tex);
++    const uint8_t black[4] = {0, 0, 0, 255};
++    CHECK(gpu::near(drawAndRead(fs).data(), black));
++    glDeleteTextures(1, &tex);
++    CHECK_GL();
++}
+--- a/vendor/SPIRV-Cross/spirv_msl.cpp
++++ b/vendor/SPIRV-Cross/spirv_msl.cpp
+@@ -14125,6 +14125,12 @@
+ 	bool builtin = has_decoration(var.self, DecorationBuiltIn);
+ 	auto builtin_type = BuiltIn(get_decoration(arg.id, DecorationBuiltIn));
+ 
++	// MSL exposes the input sample mask as a scalar and the access-chain
++	// lowering already removes GLSL's [0]. Match the lifted helper argument.
++	if (builtin && builtin_type == BuiltInSampleMask &&
++	    get<SPIRType>(var.basetype).storage == StorageClassInput)
++		return join("thread uint& ", to_expression(name_id));
++
+ 	if (address_space == "threadgroup")
+ 		is_using_builtin_array = true;
+ 
+@@ -14378,6 +14384,7 @@
+ 		"gradient2d",
+ 		"gradientcube",
+ 		"gradient3d",
++		"interpolant",
+ 		"min_lod_clamp",
+ 		"assert",
+ 		"VARIABLE_TRACEPOINT",
+--- a/scripts/build-wine-module.sh
++++ b/scripts/build-wine-module.sh
+@@ -77,5 +77,7 @@
+ 
+ # x87 acceleration for 32-bit programs (unix_x87.c): its helper goes next to
+ # winemetalgl.so. Without it the module works, and x87 code stays slow.
+-"$ROOT/scripts/build-x87sidecar.sh" "$OUT" ||
+-    echo "warning: x87sidecar was not built (scripts/build-x87sidecar.sh); WINEMETALGL_X87 will have no helper" >&2
++if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || true)" = 1 ]; then
++    "$ROOT/scripts/build-x87sidecar.sh" "$OUT" ||
++        echo "warning: x87sidecar was not built (scripts/build-x87sidecar.sh); WINEMETALGL_X87 will have no helper" >&2
++fi
