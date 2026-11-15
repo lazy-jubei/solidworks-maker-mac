@@ -22,6 +22,17 @@ mkdir -p "$LOG_DIR"
 # Truncate once here instead of at the CATSTART line below, so the launcher diagnostics written
 # before the launch survive into the log a support request quotes.
 : > "$LOG_DIR/solidworks-run.log"
+# Installer state controls activation. Removing the setting takes effect after the
+# installer also removes the app-local forwarder.
+if [[ -d "$WINEPREFIX/.sw-intel-renderer" ]]; then
+  renderer="$(python3 "${0:A:h}/tools/intel-renderer.py" check)" || exit 1
+  [[ -n "$renderer" ]] || exit 1
+  export WINEDLLPATH="$renderer${WINEDLLPATH:+:$WINEDLLPATH}"
+  export WINEMETALGL_SW_FORMAT_FALLBACK=1 WINEMETALGL_CLIP_SIBLINGS=1
+  export SW_TEST_SYNC_VIEWPORT_DRAWABLE=1 WINEMETALGL_EXTENSIONS_LENGTH=0
+  export WINEMETALGL_VENDOR='ATI Technologies Inc.'
+  print -r -- 'Using the installed Intel Metal renderer for SolidWorks.' >> "$LOG_DIR/solidworks-run.log"
+fi
 # Use a separate claim for each run, including launches that share a log directory.
 TEARDOWN_DIR="$(mktemp -d "$LOG_DIR/.container-teardown.XXXXXX")" || exit 1
 TEARDOWN_MARKER="$TEARDOWN_DIR/claimed"

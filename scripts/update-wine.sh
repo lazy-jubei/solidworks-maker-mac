@@ -34,6 +34,7 @@ trap 'WINEPREFIX="$WINEPREFIX" "$server" -k 2>/dev/null || true; WINEPREFIX="$WI
 "$ROOT/scripts/06-settings.sh"
 "$server" -k
 "$server" -w
+"$ROOT/scripts/install-intel-renderer.sh"
 "$ROOT/scripts/09-mac-launcher.sh"
 # An update can replace one half of a patched module and silently turn a fix off.
 python3 "$ROOT/scripts/check-installed-modules.py"

@@ -135,7 +135,8 @@ fi
     shutil.copy(root / 'scripts/tools/installer-ui.zsh', tools / 'installer-ui.zsh')
     env['SW_INSTALLER_UI'] = 'terminal'
     names = ['04-launcher.sh', '05-webview2.sh', '06-settings.sh', 'install-dxmt.sh',
-             'build-signin-tools.sh', '09-mac-launcher.sh', '10-fresh-signin.sh', '01-storage.sh']
+             'build-signin-tools.sh', 'install-intel-renderer.sh', '09-mac-launcher.sh',
+             '10-fresh-signin.sh', '01-storage.sh']
     # Setup creates the new prefix.
     executable(project / 'setup.sh', f'mkdir -p {shlex.quote(str(desktop))}\nprint setup >> "$INSTALL_TEST_CALLS"\n')
     executable(scripts / 'open-dashboard.sh', 'exit 0\n')
@@ -159,7 +160,7 @@ fi
     full_run = ['01-storage.sh', 'setup', '04-launcher.sh', '05-webview2.sh',
             '06-settings.sh', 'stop:-k', 'stop:-w', 'install-dxmt.sh',
             'build-signin-tools.sh', 'stop:-k', 'stop:-w', 'install-dxmt.sh',
-            'configure', '09-mac-launcher.sh', '10-fresh-signin.sh']
+            'install-intel-renderer.sh', 'configure', '09-mac-launcher.sh', '10-fresh-signin.sh']
     assert calls.read_text().splitlines() == full_run
     # Every run starts from a new prefix: after a warning, the old one (with SOLIDWORKS) is deleted.
     calls.unlink()

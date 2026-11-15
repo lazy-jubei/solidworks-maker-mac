@@ -20,7 +20,7 @@ with TemporaryDirectory(prefix='sw-launcher-config-') as temporary:
     project=temporary/'checkout with spaces'
     scripts=project/'scripts'
     for name in ('env.sh','run-solidworks.sh','10-fresh-signin.sh','tools/signin-monitor.py','tools/launch-once.py',
-                 'tools/MacLauncher.swift'):
+                 'tools/MacLauncher.swift','tools/intel-renderer.py'):
         target=scripts/name;target.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(root/'scripts'/name,target)
     main_volume=temporary/'main volume'

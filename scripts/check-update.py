@@ -201,7 +201,7 @@ exit 2
     stages = ['01-storage.sh', 'tools/check-setup-requirements.sh', '02-wine.sh',
               'build-shell32.sh', 'install-ntdll-shim.sh', 'build-mac-gdi.sh', 'build-button-capture.sh',
               'install-windows-fonts.sh', 'build-signin-tools.sh', 'install-dxmt.sh',
-              '06-settings.sh', '09-mac-launcher.sh']
+              '06-settings.sh', 'install-intel-renderer.sh', '09-mac-launcher.sh']
     for name in stages:
         put(scripts / name, '#!/bin/zsh\nset -eu\n'
             f'print {shlex.quote(name)} >> "$UPDATE_TEST_CALLS"\n'

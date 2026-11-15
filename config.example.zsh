@@ -10,3 +10,5 @@ export SW_REGISTRY='https://eu1-makers-registry.3dexperience.3ds.com'
 # export SW_WINDOWS_FONTS_DIR='/path/to/directory/with/segoeui.ttf'
 # Optional on a test installation: enable the experimental embedded sign-in renderer.
 # export SW_EMBEDDED_SIGNIN=1
+# Optional on a test Intel Mac with a Radeon GPU and macOS 15 or newer.
+# export SW_INTEL_ENHANCED_GRAPHICS=1

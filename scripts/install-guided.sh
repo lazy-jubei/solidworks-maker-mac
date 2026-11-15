@@ -238,6 +238,7 @@ wineserver -k
 wineserver -w
 installer_stage components 'finishing graphics support'
 "$ROOT/scripts/install-dxmt.sh"
+"$ROOT/scripts/install-intel-renderer.sh"
 installer_stage finish 'creating the Mac app'
 python3 "$ROOT/scripts/tools/configure-shortcut.py" "$shortcut" "$SW_CONFIG_FILE"
 "$ROOT/scripts/09-mac-launcher.sh"

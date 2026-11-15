@@ -20,7 +20,7 @@ app = Path(staging.name) / destination.name
 mac = app / 'Contents/MacOS'
 mac.mkdir(parents=True, exist_ok=True)
 runtime = app / 'Contents/Resources/runtime'
-for relative in ('env.sh', 'run-solidworks.sh', '10-fresh-signin.sh', 'tools/signin-monitor.py','tools/launch-once.py'):
+for relative in ('env.sh', 'run-solidworks.sh', '10-fresh-signin.sh', 'tools/signin-monitor.py','tools/launch-once.py','tools/intel-renderer.py'):
     dst = runtime / 'scripts' / relative
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_bytes((scripts / relative).read_bytes())
