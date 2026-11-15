@@ -1,0 +1,61 @@
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -4213,6 +4213,8 @@
+     set_thread_dpi_awareness_context( context );
+     return ret;
+ }
++
++static BOOL is_solidworks_browser_on_another_thread( HWND hwnd );
+
+ /*******************************************************************
+  *           NtUserSetWindowPos (win32u.@)
+@@ -4242,6 +4244,21 @@
+
+     if (is_current_thread_window( hwnd ))
+         return set_window_pos( &winpos, 0, 0 );
++
++    /* SolidWorks can wait indefinitely for its embedded browser while
++     * opening a document. Queue this visible pane's layout on its owner. */
++    if (flags == SWP_NOZORDER && cx > 0 && cy > 0 &&
++        is_solidworks_browser_on_another_thread( winpos.hwnd ))
++    {
++        static const WCHAR prefix[] = u"SOLIDWORKS Design Professional";
++        HWND root = NtUserGetAncestor( winpos.hwnd, GA_ROOT );
++        WCHAR title[64];
++
++        if (root && root != winpos.hwnd && is_window_visible( winpos.hwnd ) &&
++            NtUserInternalGetWindowText( root, title, ARRAY_SIZE(title) ) &&
++            !wcsncmp( title, prefix, ARRAY_SIZE(prefix) - 1 ))
++            winpos.flags = flags |= SWP_ASYNCWINDOWPOS;
++    }
+
+     if (flags & SWP_ASYNCWINDOWPOS)
+         return NtUserMessageCall( winpos.hwnd, WM_WINE_SETWINDOWPOS, 0, (LPARAM)&winpos,
+@@ -5363,8 +5380,7 @@
+     return CopyImage( ret, IMAGE_ICON, 0, 0, 0 );
+ }
+
+-/* Keep the foreign browser subtree on its owning thread during teardown. */
+-static BOOL defer_solidworks_browser_destroy( HWND hwnd )
++static BOOL is_solidworks_browser_on_another_thread( HWND hwnd )
+ {
+     static const WCHAR browser_class[] = u"Chrome_WidgetWin_1";
+     WCHAR buffer[ARRAY_SIZE(browser_class)];
+@@ -5391,7 +5407,7 @@
+ {
+     GUITHREADINFO info;
+
+-    if (defer_solidworks_browser_destroy( hwnd )) return;
++    if (is_solidworks_browser_on_another_thread( hwnd )) return;
+
+     info.cbSize = sizeof(info);
+     if (NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ))
+@@ -5480,7 +5496,7 @@
+                 destroy_window( children[i] );
+             else
+                 NtUserMessageCall( children[i], WM_WINE_DESTROYWINDOW,
+-                                   defer_solidworks_browser_destroy( children[i] ), 0,
++                                   is_solidworks_browser_on_another_thread( children[i] ), 0,
+                                    0, NtUserSendNotifyMessage, FALSE );
+         }
+         free( children );

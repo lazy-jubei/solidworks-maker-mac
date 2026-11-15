@@ -77,8 +77,10 @@ grep -q wine_batch_execute "$SRC/dlls/opengl32/unix_thunks.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/opengl32-batch-calls.patch"
 grep -q begin_solidworks_status_paint "$SRC/dlls/win32u/dce.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-status-paint.patch"
-grep -q defer_solidworks_browser_destroy "$SRC/dlls/win32u/window.c" \
+grep -q destroy_window_with_notification "$SRC/dlls/win32u/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-browser-destroy.patch"
+grep -q is_solidworks_browser_on_another_thread "$SRC/dlls/win32u/window.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-browser-layout.patch"
 grep -q 'Only that loop should release its capture' "$SRC/dlls/win32u/menu.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-preserve-sizing-capture.patch"
 # Apply or remove the optional embedded login changes on the existing build tree.
