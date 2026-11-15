@@ -59,15 +59,42 @@ grep -q sw_keep_heading_width "$SRC/dlls/comctl32_v6/button.c" \
 export PATH="$(sw_build_path "$LLVM/bin")"
 export TMPDIR="$VOL/tmp"
 mkdir -p "$OBJ"
-if [[ ! -f "$OBJ/Makefile" ]]; then
-  ( cd "$OBJ" && arch -x86_64 env CC="/usr/bin/clang -arch x86_64" "$SRC/configure" \
+# win32u loads the FreeType library already shipped with Wine. Use headers for
+# that version and resolve the library relative to the installed win32u module.
+FREETYPE_SONAME='@loader_path/../../libfreetype.6.dylib'
+[[ -f "$WINE_APP/Contents/Resources/wine/lib/libfreetype.6.dylib" ]] || {
+  print -u2 'The Wine bundle is missing its FreeType library; run 02-wine.sh first.'
+  exit 1
+}
+if [[ ! -f "$OBJ/Makefile" || ! -f "$OBJ/freetype-include/ft2build.h" ]] ||
+   ! grep -Fxq "#define SONAME_LIBFREETYPE \"$FREETYPE_SONAME\"" "$OBJ/include/config.h" 2>/dev/null; then
+  FREETYPE_VERSION=2.13.3
+  FREETYPE_ARCHIVE="$CACHE/freetype-$FREETYPE_VERSION.tar.xz"
+  FREETYPE_SHA='0550350666d427c74daeb85d5ac7bb353acba5f76956395995311a9c6f063289'
+  if [[ ! -f "$FREETYPE_ARCHIVE" ]]; then
+    curl --proto '=https' -fL --retry 3 -o "$FREETYPE_ARCHIVE.download" \
+      "https://download-mirror.savannah.gnu.org/releases/freetype/${FREETYPE_ARCHIVE:t}"
+    echo "$FREETYPE_SHA  $FREETYPE_ARCHIVE.download" | shasum -a 256 -c -
+    mv "$FREETYPE_ARCHIVE.download" "$FREETYPE_ARCHIVE"
+  fi
+  echo "$FREETYPE_SHA  $FREETYPE_ARCHIVE" | shasum -a 256 -c -
+  tar -xJf "$FREETYPE_ARCHIVE" -C "$BUILD" "freetype-$FREETYPE_VERSION/include"
+  # Wine's configure splits its compiler flags on spaces, including quoted paths.
+  ln -sfn "$BUILD/freetype-$FREETYPE_VERSION/include" "$OBJ/freetype-include"
+  ( cd "$OBJ" && arch -x86_64 env CC="/usr/bin/clang -arch x86_64" \
+      FREETYPE_CFLAGS="-Ifreetype-include" \
+      ac_cv_lib_soname_freetype="$FREETYPE_SONAME" "$SRC/configure" \
       --build=x86_64-apple-darwin --enable-archs=i386,x86_64 --with-mingw --disable-tests \
-      --without-x --without-freetype --without-gnutls --without-gstreamer --without-sdl \
+      --without-x --with-freetype --without-gnutls --without-gstreamer --without-sdl \
       --without-vulkan --without-opencl --without-pcap --without-pcsclite --without-cups \
       --without-inotify --without-krb5 --without-gssapi --without-netapi --without-usb \
       --without-v4l2 --without-sane --without-pulse --without-oss --without-alsa \
       --without-capi --without-dbus --without-gphoto --without-udev --without-wayland \
       --without-ffmpeg --without-gettext --without-gettextpo )
+  if ! grep -Fxq "#define SONAME_LIBFREETYPE \"$FREETYPE_SONAME\"" "$OBJ/include/config.h"; then
+    print -u2 'Wine configure did not enable the bundled FreeType backend.'
+    exit 1
+  fi
 fi
 ( cd "$OBJ" && arch -x86_64 make -j"$(/usr/sbin/sysctl -n hw.ncpu)" dlls/shell32/x86_64-windows/shell32.dll dlls/wininet/x86_64-windows/wininet.dll programs/services/x86_64-windows/services.exe dlls/msi/x86_64-windows/msi.dll dlls/msi/i386-windows/msi.dll dlls/wow64/x86_64-windows/wow64.dll dlls/kernelbase/x86_64-windows/kernelbase.dll dlls/comctl32/x86_64-windows/comctl32.dll dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll )
 

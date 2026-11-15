@@ -16,7 +16,11 @@ source "${0:A:h}/env.sh"
 BUILD="${SW_BUILD:-$VOL/build}"
 SRC="$BUILD/src-wine-$WINE_VERSION"
 OBJ="$BUILD/obj-wine-$WINE_VERSION"
-[[ -f "$OBJ/Makefile" ]] || { print -u2 'Build the Wine source with build-shell32.sh first.'; exit 1; }
+if [[ ! -f "$OBJ/Makefile" ]] ||
+   ! grep -Fxq '#define SONAME_LIBFREETYPE "@loader_path/../../libfreetype.6.dylib"' "$OBJ/include/config.h"; then
+  print -u2 'Configure the Wine source with build-shell32.sh before replacing win32u.'
+  exit 1
+fi
 python3 - "$WINE_APP/Contents/Resources/wine/bin/wineserver" <<'PY'
 import os,subprocess,sys
 wanted=os.path.realpath(sys.argv[1])
