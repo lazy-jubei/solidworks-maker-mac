@@ -19,6 +19,13 @@ REGISTRY="${SW_REGISTRY:-https://eu1-makers-registry.3dexperience.3ds.com}"
 W='C:\Program Files\Dassault Systemes\SOLIDWORKS 3DEXPERIENCE R2026x\win_b64\code\bin'
 LOG_DIR="${SW_LOG_DIR:-$ROOT/logs}"
 mkdir -p "$LOG_DIR"
+# Truncate once here instead of at the CATSTART line below, so the launcher diagnostics written
+# before the launch survive into the log a support request quotes.
+: > "$LOG_DIR/solidworks-run.log"
+# Cleared on every start so a marker left by a run that was itself killed cannot silence this
+# run's teardown.
+TEARDOWN_MARKER="$LOG_DIR/.container-teardown"
+rm -rf -- "$TEARDOWN_MARKER"
 cd "$WINEPREFIX/drive_c"
 # The Launcher service can exit at boot with "Core function failed!", but starts fine afterwards,
 # so start it on every launch. Do not gate this on the health probe: 127.0.0.1:20250 answers for
@@ -69,24 +76,85 @@ fi
 # Automatic cross-process viewport resizing is disabled: it caused sketch crashes.
 # Keep CAD's own geometry untouched. SwViewportFix is retained only for diagnosis.
 
-wine "$W\\CATSTART.exe" -run "SWXDesktopLauncher.exe" \
-    -object "--AppName=\"SWXCSWK_AP\" -tenant=$TENANT  -monoapp -3DRegistryURL=$REGISTRY" -nowindow \
-    > "$LOG_DIR/solidworks-run.log" 2>&1
-launch_status=$?
+# Processes belonging to this container: those that hold the prefix *and* run this Wine install.
+# Both tests matter - the prefix directory is readable by anything that happens to have it open,
+# so a backup, a shell with that working directory or a test harness would otherwise be signalled
+# along with the container. If the install root cannot be identified this prints nothing, which
+# leaves orphans behind rather than killing a process we do not own.
+container_processes() {
+  local pid root="${WINE_APP:-}/Contents/Resources/wine"
+  [[ -d "$root" ]] || root="$(dirname "$(dirname "$(command -v wine 2>/dev/null)")")"
+  [[ "$root" == /* ]] || return 0
+  for pid in $(lsof +D "$WINEPREFIX" 2>/dev/null | awk 'NR>1{print $2}' | sort -u || true); do
+    if lsof -p "$pid" 2>/dev/null | grep -qF "$root/"; then
+      print -r -- "$pid"
+    fi
+  done
+}
+
 # SolidWorks leaves its platform behind when it exits: the launcher service, ViewServerV6 and
 # the Visualize queue server keep running against a session that no longer exists, and the next
 # start then finds the launcher "already running" while nothing answers it. Wait for them to
 # leave on their own, then stop this prefix only - wineserver is prefix-scoped, so another Wine
 # install on the same machine keeps its own processes.
-wine wineserver -w > /dev/null 2>&1 &
-waiter=$!
-for _ in {1.."${SW_SHUTDOWN_GRACE:-30}"}; do
-  kill -0 "$waiter" 2>/dev/null || break
-  sleep 1
-done
-if kill -0 "$waiter" 2>/dev/null; then
-  print -r -- "SolidWorks exited; stopping leftover Wine processes for $WINEPREFIX" >> "$LOG_DIR/solidworks-run.log"
-  wine wineserver -k > /dev/null 2>&1
-  wait "$waiter" 2>/dev/null
-fi
+stop_container() {
+  # Both the watchdog and the normal exit path can reach this, and a second drain would signal a
+  # session the first one is already retiring. mkdir is atomic, so exactly one caller owns it.
+  mkdir "$TEARDOWN_MARKER" 2>/dev/null || return 0
+  wine wineserver -w > /dev/null 2>&1 &
+  local waiter=$!
+  for _ in {1.."${SW_SHUTDOWN_GRACE:-30}"}; do
+    kill -0 "$waiter" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$waiter" 2>/dev/null; then
+    print -r -- "SolidWorks exited; stopping leftover Wine processes for $WINEPREFIX" >> "$LOG_DIR/solidworks-run.log"
+    wine wineserver -k > /dev/null 2>&1
+    wait "$waiter" 2>/dev/null
+  fi
+  # A force-quit can take the server down before its session does, and `wineserver -k` only
+  # reaches processes still registered with a live server. Anything left holding the prefix is
+  # attached to nothing and will outlive every later start, so retire it by signal. Only processes
+  # running this Wine install qualify: the prefix directory is also open in backups, shells and
+  # test harnesses, and signalling one of those would be data loss.
+  local stragglers
+  stragglers=$(container_processes)
+  if [[ -n "$stragglers" ]]; then
+    print -r -- "sweeping $(wc -l <<< "$stragglers" | tr -d ' ') Wine processes still holding $WINEPREFIX" >> "$LOG_DIR/solidworks-run.log"
+    kill ${(f)stragglers} 2>/dev/null
+    sleep 3
+    kill -9 ${(f)$(container_processes)} 2>/dev/null
+  fi
+}
+
+# A force-quit or a crash can leave CATSTART blocked in a call that never returns, and then the
+# drain below is never reached and the whole container outlives the app. Watch the CAD process
+# itself so the teardown happens even while this script is still waiting on CATSTART. Another
+# Wine install's SLDWORKS.exe also matches this name, which only ever delays the watchdog - the
+# normal drain below still stops this prefix, so a foreign match cannot leave processes behind.
+(
+  # Only tear down a session that actually started. A launch parked on a login page can leave
+  # CAD unborn for longer than any wait here, and retiring the launcher chain underneath it
+  # would kill a sign-in the user is still working on.
+  seen=0
+  for _ in {1..900}; do
+    if pgrep -f 'sldworks.exe' > /dev/null 2>&1; then seen=1; break; fi
+    sleep 1
+  done
+  if [[ "$seen" == 1 ]]; then
+    while pgrep -f 'sldworks.exe' > /dev/null 2>&1; do
+      sleep 2
+    done
+    stop_container
+  fi
+) &
+watchdog=$!
+
+wine "$W\\CATSTART.exe" -run "SWXDesktopLauncher.exe" \
+    -object "--AppName=\"SWXCSWK_AP\" -tenant=$TENANT  -monoapp -3DRegistryURL=$REGISTRY" -nowindow \
+    >> "$LOG_DIR/solidworks-run.log" 2>&1
+launch_status=$?
+kill "$watchdog" 2>/dev/null
+wait "$watchdog" 2>/dev/null
+stop_container
 exit "$launch_status"

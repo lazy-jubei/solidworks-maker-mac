@@ -7,11 +7,15 @@ import sys
 import time
 
 tools = pathlib.Path(sys.argv[1])
-lock = (tools / 'signin-monitor.lock').open('w')
+# 'a', not 'w': 'w' truncates the file before the lock is held, erasing the PID of a monitor that
+# already owns it and letting a second one drive the same dialogs against the same prefix.
+lock = (tools / 'signin-monitor.lock').open('a')
 try:
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 except BlockingIOError:
     sys.exit(0)
+lock.seek(0)
+lock.truncate()
 lock.write(str(__import__('os').getpid()))
 lock.flush()
 end = time.monotonic() + 300

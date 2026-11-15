@@ -20,7 +20,7 @@ patterns = [
     rb'/Users/[A-Za-z0-9._-]+/',
     rb'(?:192\.168\.|100\.85\.)\d+\.\d+',
     rb'(?i)(?:password|passwd)\s*[:=]\s*[\x22\x27][^\x22\x27\n]{4,}[\x22\x27]',
-    rb'(?i)(?:SW_TENANT|TENANT)\s*=\s*[\x22\x27]OI\d+',
+    rb'(?i)(?:SW_TENANT|TENANT)\s*=\s*[\x22\x27]?OI\d+',
 ]
 for relative in paths:
     path = root / relative
