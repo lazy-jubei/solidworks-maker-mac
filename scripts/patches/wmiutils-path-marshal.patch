@@ -1,0 +1,53 @@
+--- a/dlls/wmiutils/path.c
++++ b/dlls/wmiutils/path.c
+@@ -49,6 +49,7 @@
+ struct path
+ {
+     IWbemPath        IWbemPath_iface;
++    IUnknown        *marshaler;
+     LONG             refs;
+     CRITICAL_SECTION cs;
+     WCHAR           *text;
+@@ -339,6 +340,7 @@
+     if (!refs)
+     {
+         TRACE("destroying %p\n", path);
++        IUnknown_Release( path->marshaler );
+         clear_path( path );
+         path->cs.DebugInfo->Spare[0] = 0;
+         DeleteCriticalSection( &path->cs );
+@@ -355,6 +357,10 @@
+     struct path *path = impl_from_IWbemPath( iface );
+
+     TRACE("%p, %s, %p\n", path, debugstr_guid( riid ), ppvObject );
++
++    *ppvObject = NULL;
++    if (IsEqualGUID( riid, &IID_IMarshal ))
++        return IUnknown_QueryInterface( path->marshaler, riid, ppvObject );
+
+     if ( IsEqualGUID( riid, &IID_IWbemPath ) ||
+          IsEqualGUID( riid, &IID_IUnknown ) )
+@@ -1293,6 +1299,7 @@
+ HRESULT WbemPath_create( LPVOID *ppObj )
+ {
+     struct path *path;
++    HRESULT hr;
+
+     TRACE("%p\n", ppObj);
+
+@@ -1300,6 +1307,15 @@
+
+     path->IWbemPath_iface.lpVtbl = &path_vtbl;
+     path->refs = 1;
++    /* System.Management can share a management path across COM apartments.
++     * The critical section serializes access to the path's mutable state. */
++    if (FAILED(hr = CoCreateFreeThreadedMarshaler( (IUnknown *)&path->IWbemPath_iface,
++                                                  &path->marshaler )))
++    {
++        free( path );
++        return hr;
++    }
++
+     InitializeCriticalSectionEx( &path->cs, 0, RTL_CRITICAL_SECTION_FLAG_FORCE_DEBUG_INFO );
+     path->cs.DebugInfo->Spare[0] = (DWORD_PTR)(__FILE__ ": wmiutils_path.cs");
+     init_path( path );

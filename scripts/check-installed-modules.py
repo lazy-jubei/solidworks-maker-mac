@@ -32,7 +32,8 @@ modules={'winemac.so':(lib/'x86_64-unix/winemac.so',None,'.gdi.sha256'),
          'opengl32.so':(lib/'x86_64-unix/opengl32.so',None,None),
          'win32u.so':(lib/'x86_64-unix/win32u.so',None,None),
          'comctl32_v6.dll':(lib/'x86_64-windows/comctl32_v6.dll',system32/'comctl32_v6.dll','.capture.sha256'),
-         'gdi32.dll':(lib/'x86_64-windows/gdi32.dll',system32/'gdi32.dll',None)}
+         'gdi32.dll':(lib/'x86_64-windows/gdi32.dll',system32/'gdi32.dll',None),
+         'wmiutils.dll':(lib/'x86_64-windows/wmiutils.dll',system32/'wbem/wmiutils.dll',None)}
 # winemac.so is restored by rebuilding from an unpatched tree, so its safety net is the marker
 # below rather than a saved binary; every other module must keep one.
 no_stock={'winemac.so'}

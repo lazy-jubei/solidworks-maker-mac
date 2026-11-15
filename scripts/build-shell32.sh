@@ -56,6 +56,10 @@ python3 -I "$PATCHES/comctl32-button-capture.py" "$SRC"
 grep -q sw_keep_heading_width "$SRC/dlls/comctl32_v6/button.c" \
   || patch -s -N -d "$SRC" -p1 < "$PATCHES/comctl32-property-manager-layout.patch"
 
+# .NET System.Management passes IWbemPath between COM apartments.
+grep -Fq CoCreateFreeThreadedMarshaler "$SRC/dlls/wmiutils/path.c" ||
+  patch -s -N -d "$SRC" -p1 < "$PATCHES/wmiutils-path-marshal.patch"
+
 export PATH="$(sw_build_path "$LLVM/bin")"
 export TMPDIR="$VOL/tmp"
 mkdir -p "$OBJ"
@@ -96,7 +100,7 @@ if [[ ! -f "$OBJ/Makefile" || ! -f "$OBJ/freetype-include/ft2build.h" ]] ||
     exit 1
   fi
 fi
-( cd "$OBJ" && arch -x86_64 make -j"$(/usr/sbin/sysctl -n hw.ncpu)" dlls/shell32/x86_64-windows/shell32.dll dlls/wininet/x86_64-windows/wininet.dll programs/services/x86_64-windows/services.exe dlls/msi/x86_64-windows/msi.dll dlls/msi/i386-windows/msi.dll dlls/wow64/x86_64-windows/wow64.dll dlls/kernelbase/x86_64-windows/kernelbase.dll dlls/comctl32/x86_64-windows/comctl32.dll dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll )
+( cd "$OBJ" && arch -x86_64 make -j"$(/usr/sbin/sysctl -n hw.ncpu)" dlls/shell32/x86_64-windows/shell32.dll dlls/wininet/x86_64-windows/wininet.dll programs/services/x86_64-windows/services.exe dlls/msi/x86_64-windows/msi.dll dlls/msi/i386-windows/msi.dll dlls/wow64/x86_64-windows/wow64.dll dlls/kernelbase/x86_64-windows/kernelbase.dll dlls/comctl32/x86_64-windows/comctl32.dll dlls/comctl32_v6/x86_64-windows/comctl32_v6.dll dlls/wmiutils/x86_64-windows/wmiutils.dll )
 
 if [[ -n "${SW_BUILD_ONLY:-}" ]]; then exit 0; fi
 DST="$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/shell32.dll"
@@ -124,6 +128,10 @@ W64="${DST:h}/wow64.dll"
 [[ -f "$W64.stock" ]] || cp "$W64" "$W64.stock"
 cp "$OBJ/dlls/wow64/x86_64-windows/wow64.dll" "$W64"
 cp "$W64" "$WINEPREFIX/drive_c/windows/system32/wow64.dll"
+WMI="${DST:h}/wmiutils.dll"
+[[ -f "$WMI.stock" ]] || cp "$WMI" "$WMI.stock"
+cp "$OBJ/dlls/wmiutils/x86_64-windows/wmiutils.dll" "$WMI"
+cp "$WMI" "$WINEPREFIX/drive_c/windows/system32/wbem/wmiutils.dll"
 for mod in kernelbase comctl32 comctl32_v6; do
   LIB="$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-windows/$mod.dll"
   [[ -f "$LIB.stock" ]] || cp "$LIB" "$LIB.stock"
