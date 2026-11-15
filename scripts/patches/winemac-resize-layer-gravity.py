@@ -66,7 +66,7 @@ static BOOL resize_gravity_top_left(void)
 
 '''
 
-anchor = '/* Win32 speaks raw pixels and Cocoa points'
+anchor = '@implementation WineContentView'
 code = replace(code, anchor, helpers + anchor)
 
 sites = [
