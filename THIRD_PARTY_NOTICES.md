@@ -12,6 +12,8 @@ Existing upstream copyright and license notices remain applicable.
 - The Mac OpenGL/GDI patch adapts GeanyBezna/winemac-offscreen-children v0.2.0
   (LGPL-2.1-or-later): https://github.com/GeanyBezna/winemac-offscreen-children.
   The original patch and LGPL text are retained in scripts/patches/.
+- The optional embedded sign-in patch adapts macgameport's cross-process layer bridge
+  (LGPL-2.1-or-later): https://github.com/macgameport/cities-skylines-2-macos/issues/1.
 - diagnostics/glchild-overlay-dpi.c adapts that project's MIT-licensed test;
   see diagnostics/LICENSE.glchild.
 - DXMT v0.80: https://github.com/3Shain/dxmt — LGPL-2.1-or-later. Downloaded at

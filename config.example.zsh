@@ -8,3 +8,5 @@ export SW_REGISTRY='https://eu1-makers-registry.3dexperience.3ds.com'
 # export SW_PREFIX='/Volumes/SWWine/prefix-11.16'
 # Optional: use local Windows fonts instead of downloading Segoe UI.
 # export SW_WINDOWS_FONTS_DIR='/path/to/directory/with/segoeui.ttf'
+# Optional on a test installation: enable the experimental embedded sign-in renderer.
+# export SW_EMBEDDED_SIGNIN=1

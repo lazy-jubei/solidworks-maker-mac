@@ -3,12 +3,14 @@
 import fcntl
 import os
 from pathlib import Path
+import runpy
 import select
 import shutil
 import subprocess
 import sys
 import time
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 root = Path(__file__).resolve().parent.parent
 with TemporaryDirectory(prefix='sw-single-launch-') as directory:
@@ -102,4 +104,20 @@ with TemporaryDirectory(prefix='sw-single-launch-') as directory:
                 separate.terminate()
                 separate.wait(timeout=10)
 
-print('Passed: existing session reuse, probe failure refusal, simultaneous/aliased-prefix launches, distinct-prefix isolation, runner failure, stale lock-file recovery and per-prefix sign-in monitor isolation. No Wine or CAD executed.')
+
+    # Run one monitor cycle with a visible login. Only the fallback should
+    # move the browser out of the vendor window.
+    for mode, expected in (
+        ('0', ['--list', 'Cancel', 'detach']),
+        ('1', ['--list', 'Cancel']),
+    ):
+        report = subprocess.CompletedProcess([], 0, stdout=b'Login - 3DEXPERIENCE ID')
+        with (patch.dict(os.environ, WINEPREFIX=str(prefix), SW_MAC_EMBEDDED_SIGNIN=mode),
+              patch.object(sys, 'argv', [monitor[1], str(tools)]),
+              patch('time.monotonic', side_effect=[0, 1, 1, 301]),
+              patch('time.sleep'),
+              patch('subprocess.run', return_value=report) as helpers):
+            runpy.run_path(monitor[1], run_name='__main__')
+        assert [call.args[0][-1] for call in helpers.call_args_list] == expected
+
+print('Passed: existing session reuse, probe failure refusal, simultaneous/aliased-prefix launches, distinct-prefix isolation, runner failure, stale lock-file recovery and per-prefix sign-in monitor isolation and embedded browser handling. No Wine or CAD executed.')

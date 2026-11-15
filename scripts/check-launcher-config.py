@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -80,4 +81,34 @@ with TemporaryDirectory(prefix='sw-launcher-config-') as temporary:
     for mode,filename in (('','swwine.sparsebundle'),('--test','swwine-test.sparsebundle')):
         result=inspect(mode);assert result.returncode==0,result.stderr
         assert json.loads(result.stdout)['IMAGE']==str(project/filename),result.stdout
-print('Launcher configuration passed: custom main paths, isolated fresh prefix, shared-prefix/image refusal, default images; paths with spaces.')
+
+    tool_dir = main_volume / 'tools'
+    tool_dir.mkdir()
+    for helper in ('ConfirmDialog', 'WebViewWindow', 'WinInput', 'ExistingCad'):
+        (tool_dir / (helper + '.exe')).touch()
+    (scripts / 'tools/launch-once.py').write_text(
+        'import os\nprint(os.environ.get("SW_MAC_EMBEDDED_SIGNIN", "fallback"))\n')
+    unix = wine.parent.parent / 'lib/wine/x86_64-unix'
+    unix.mkdir(parents=True)
+    modules = (unix / 'win32u.so', unix / 'winemac.so')
+    for module in modules:
+        module.write_bytes(module.name.encode())
+    marker = unix / 'embedded-signin.sha256'
+    marker.write_text(''.join(
+        f'{hashlib.sha256(module.read_bytes()).hexdigest()}  {module.name}\n' for module in modules))
+
+    def signin(setting):
+        config.write_text(base_config + f'export SW_EMBEDDED_SIGNIN={setting}\n')
+        return subprocess.run(['zsh', str(scripts / '10-fresh-signin.sh')],
+                              env=dict(os.environ, SW_MAC_EMBEDDED_SIGNIN='1'),
+                              capture_output=True, text=True, check=True, timeout=10)
+
+    assert signin(0).stdout.strip() == 'fallback'
+    assert signin(1).stdout.strip() == '1'
+    modules[1].write_bytes(b'updated module')
+    mismatch = signin(1)
+    assert mismatch.stdout.strip() == 'fallback' and 'out of date' in mismatch.stderr
+    marker.unlink()
+    assert signin(1).stdout.strip() == 'fallback'
+
+print('Launcher configuration passed: custom main paths, isolated fresh prefix, shared-prefix/image refusal, default images, paths with spaces and embedded sign-in fallback.')

@@ -81,6 +81,15 @@ grep -q defer_solidworks_browser_destroy "$SRC/dlls/win32u/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-browser-destroy.patch"
 grep -q 'Only that loop should release its capture' "$SRC/dlls/win32u/menu.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-preserve-sizing-capture.patch"
+# Apply or remove the optional embedded login changes on the existing build tree.
+embedded_patch="$ROOT/scripts/patches/winemac-embedded-signin.patch"
+embedded=${SW_EMBEDDED_SIGNIN:-0}
+if [[ "$embedded" == 1 ]]; then
+  grep -Fq SW_MAC_EMBEDDED_SIGNIN "$SRC/dlls/win32u/dce.c" ||
+    git -C "$SRC" apply "$embedded_patch"
+elif grep -Fq SW_MAC_EMBEDDED_SIGNIN "$SRC/dlls/win32u/dce.c"; then
+  git -C "$SRC" apply -R "$embedded_patch"
+fi
 export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/winemac.drv/winemac.so dlls/opengl32/opengl32.so \
@@ -99,10 +108,11 @@ dst.with_name(dst.name+'.gdi.sha256').write_text(hashlib.sha256(dst.read_bytes()
 print('Installed Mac GDI presentation driver; run-solidworks.sh will enable it for this bundle.')
 PY
 # Keep the original modules alongside their signed replacements.
-python3 - "$OBJ/dlls" "$WINE_APP/Contents/Resources/wine/lib/wine" "$WINEPREFIX/drive_c/windows/system32" <<'PY'
+python3 - "$OBJ/dlls" "$WINE_APP/Contents/Resources/wine/lib/wine" "$WINEPREFIX/drive_c/windows/system32" \
+  "$embedded" <<'PY'
 from pathlib import Path
-import shutil,subprocess,sys
-obj,lib,system32=map(Path,sys.argv[1:])
+import hashlib,shutil,subprocess,sys
+obj,lib,system32=map(Path,sys.argv[1:4])
 pairs=[(obj/'opengl32/x86_64-windows/opengl32.dll',lib/'x86_64-windows/opengl32.dll'),
        (obj/'opengl32/opengl32.so',lib/'x86_64-unix/opengl32.so'),
        (obj/'opengl32/x86_64-windows/opengl32.dll',system32/'opengl32.dll'),
@@ -115,5 +125,15 @@ for src,dst in pairs:
     tmp=dst.with_name(dst.name+'.new');shutil.copy2(src,tmp)
     if dst.suffix=='.so':subprocess.run(['/usr/bin/codesign','--force','--sign','-',str(tmp)],check=True)
     tmp.replace(dst)
+unix = lib / 'x86_64-unix'
+marker = unix / 'embedded-signin.sha256'
+if sys.argv[4] == '1':
+    temporary = marker.with_suffix('.new')
+    temporary.write_text(''.join(
+        f'{hashlib.sha256((unix / module).read_bytes()).hexdigest()}  {module}\n'
+        for module in ('win32u.so', 'winemac.so')))
+    temporary.replace(marker)
+else:
+    marker.unlink(missing_ok=True)
 print('Installed batched OpenGL, SolidWorks search text, and status bar paint fixes.')
 PY

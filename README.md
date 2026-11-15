@@ -30,13 +30,8 @@ After setup, open **SolidWorks (Wine)** in Applications.
 
 Run the install command again. If an installation is found, click **Update** in the
 installer window. Your SOLIDWORKS installation, settings and CAD files are kept.
-Select **Also update Wine patches and browser graphics** to include those updates.
-
-To also update Wine patches and browser graphics, quit SolidWorks and Wine first, then run:
-
-```sh
-zsh ~/SolidWorksMakerMac/scripts/update.sh --wine
-```
+To update Wine as well, quit SolidWorks and Wine before selecting **Also update Wine
+patches and browser graphics** in the installer window.
 
 ## Details
 
@@ -55,6 +50,15 @@ every Mac, SolidWorks is told it runs as x64 on an ARM64 host, because its licen
 crashes under Wine on the native x64 path, Intel Macs included. A targeted mouse-capture fix
 lets the feature editor’s OK/Cancel buttons receive clicks correctly. Browser graphics
 libraries are scoped to the embedded browsers to support startup and reduce idle CPU use.
+
+### Experimental embedded sign-in
+
+On a test installation, add `export SW_EMBEDDED_SIGNIN=1` to `config.local.zsh` and use
+the installer window to update Wine patches and browser graphics. This keeps the
+3DEXPERIENCE sign-in browser inside the vendor dialog. The window fixture and SolidWorks
+startup have been tested on Intel. Fresh sign-in and Apple Silicon verification are pending.
+To return to the current sign-in workaround, remove the setting and use the same Wine
+update option.
 
 ### Graphics performance
 

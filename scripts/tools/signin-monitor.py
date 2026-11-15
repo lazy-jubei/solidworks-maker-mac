@@ -19,6 +19,13 @@ lock.seek(0)
 lock.truncate()
 lock.write(str(os.getpid()))
 lock.flush()
+commands = [
+    ["wine", str(tools / 'ConfirmDialog.exe'), "Authentication Required",
+     "eu1-makers.iam.3dexperience.3ds.com", "Cancel"],
+]
+if os.environ.get('SW_MAC_EMBEDDED_SIGNIN') != '1':
+    commands.append(["wine", str(tools / 'WebViewWindow.exe'), "detach"])
+
 end = time.monotonic() + 300
 last_login = None
 while time.monotonic() < end:
@@ -31,9 +38,7 @@ while time.monotonic() < end:
             break
         elif last_login is None and time.monotonic() > end - 120:
             break
-        for cmd in (["wine", str(tools / 'ConfirmDialog.exe'), "Authentication Required",
-                     "eu1-makers.iam.3dexperience.3ds.com", "Cancel"],
-                    ["wine", str(tools / 'WebViewWindow.exe'), "detach"]):
+        for cmd in commands:
             subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                            stderr=subprocess.DEVNULL, timeout=8)
     except subprocess.TimeoutExpired:
