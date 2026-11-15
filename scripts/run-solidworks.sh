@@ -108,6 +108,15 @@ container_processes() {
 # leave on their own, then stop this prefix only - wineserver is prefix-scoped, so another Wine
 # install on the same machine keeps its own processes.
 stop_container() {
+  # Stop the monitor before draining Wine. Its next helper would restart an
+  # already-stopped prefix if it kept polling independently of the session.
+  if [[ -n "${SW_SIGNIN_SESSION:-}" ]]; then
+    touch "$SW_SIGNIN_SESSION/stop"
+    for _ in {1..110}; do
+      [[ -f "$SW_SIGNIN_SESSION/stopped" ]] && break
+      sleep .1
+    done
+  fi
   wine wineserver -w > /dev/null 2>&1 &
   local waiter=$!
   for _ in {1.."${SW_SHUTDOWN_GRACE:-30}"}; do

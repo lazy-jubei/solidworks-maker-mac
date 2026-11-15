@@ -2,9 +2,11 @@
 """Serialize startup per prefix and reuse a running CAD or vendor sign-in session."""
 import fcntl
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 
 
 def launch(tools, runner):
@@ -33,10 +35,24 @@ def launch(tools, runner):
             return 0
         if probe.returncode != 2:
             sys.exit('Could not check the existing CAD session; refusing a duplicate launch.')
-        subprocess.Popen([sys.executable, str(Path(__file__).with_name('signin-monitor.py')), str(tools)],
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, start_new_session=True)
-        return subprocess.call([str(runner)])
+        with TemporaryDirectory(prefix='.solidworks-signin-', dir=prefix) as session:
+            env = dict(os.environ, SW_SIGNIN_SESSION=session, SW_SIGNIN_OWNER=str(os.getpid()))
+            monitor = subprocess.Popen(
+                [sys.executable, str(Path(__file__).with_name('signin-monitor.py')), str(tools)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True, env=env)
+            try:
+                return subprocess.call([str(runner)], env=env)
+            finally:
+                (Path(session) / 'stop').touch()
+                try:
+                    monitor.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(monitor.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    monitor.wait()
 
 
 if __name__ == '__main__':

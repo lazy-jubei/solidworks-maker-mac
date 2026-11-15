@@ -55,6 +55,9 @@ case "$1:$2" in
         exit 37
         ;;
     wineserver:-w)
+        if [[ -n "$SW_SIGNIN_SESSION" && ! -f "$SW_SIGNIN_SESSION/stopped" ]]; then
+            print monitor-still-running >> "$TEST_ROOT/calls"
+        fi
         print wait >> "$TEST_ROOT/calls"
         touch "$TEST_ROOT/waiter"
         for _ in {1..160}; do
@@ -74,12 +77,27 @@ esac
     env = dict(os.environ, TEST_ROOT=str(root), SW_TENANT='fixture',
                SW_SHUTDOWN_GRACE='3')
     for test_case in ['watchdog', 'launcher']:
-        result = subprocess.run(['/bin/zsh', str(root / runner.name)],
-                                env=dict(env, TEST_CASE=test_case), timeout=16)
+        session = root / test_case
+        session.mkdir()
+        case_env = dict(env, TEST_CASE=test_case, SW_SIGNIN_SESSION=str(session))
+        with subprocess.Popen(['/bin/zsh', '-c', '''
+for _ in {1..200}; do
+    if [[ -f "$SW_SIGNIN_SESSION/stop" ]]; then
+        sleep .3
+        touch "$SW_SIGNIN_SESSION/stopped"
+        exit
+    fi
+    sleep .05
+done
+exit 1
+'''], env=case_env) as monitor:
+            result = subprocess.run(['/bin/zsh', str(root / runner.name)],
+                                    env=case_env, timeout=16)
+            assert monitor.wait(timeout=2) == 0
         assert result.returncode == 37, result.returncode
         assert not list((root / 'logs').glob('.container-teardown.*'))
         assert (root / 'calls').read_text().splitlines() == ['wait', 'stop'], (
             test_case, (root / 'calls').read_text())
         for name in ['calls', 'waiter', 'stopped', 'checked-foreign', 'release-foreign']:
             (root / name).unlink(missing_ok=True)
-    print('Watchdog-owned and launcher-owned teardown each completed once with a separate prefix active.')
+    print('Watchdog-owned and launcher-owned teardown each stopped the sign-in monitor before draining Wine, with a separate prefix active.')
