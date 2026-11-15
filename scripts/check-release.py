@@ -56,4 +56,5 @@ subprocess.run([sys.executable,str(root/'scripts/check-installer.py')],check=Tru
 subprocess.run([sys.executable,str(root/'scripts/check-update.py')],check=True)
 subprocess.run([sys.executable,str(root/'scripts/check-host-architecture.py')],check=True)
 subprocess.run([sys.executable,str(root/'scripts/check-single-launch.py')],check=True)
+subprocess.run([sys.executable,str(root/'scripts/check-launcher-teardown.py')],check=True)
 print(f'Passed: {len(paths)} tracked files, syntax, local links and publication-content checks.')

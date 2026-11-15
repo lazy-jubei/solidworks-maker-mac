@@ -22,10 +22,9 @@ mkdir -p "$LOG_DIR"
 # Truncate once here instead of at the CATSTART line below, so the launcher diagnostics written
 # before the launch survive into the log a support request quotes.
 : > "$LOG_DIR/solidworks-run.log"
-# Cleared on every start so a marker left by a run that was itself killed cannot silence this
-# run's teardown.
-TEARDOWN_MARKER="$LOG_DIR/.container-teardown"
-rm -rf -- "$TEARDOWN_MARKER"
+# Use a separate claim for each run, including launches that share a log directory.
+TEARDOWN_DIR="$(mktemp -d "$LOG_DIR/.container-teardown.XXXXXX")" || exit 1
+TEARDOWN_MARKER="$TEARDOWN_DIR/claimed"
 cd "$WINEPREFIX/drive_c"
 # The Launcher service can exit at boot with "Core function failed!", but starts fine afterwards,
 # so start it on every launch. Do not gate this on the health probe: 127.0.0.1:20250 answers for
@@ -98,9 +97,6 @@ container_processes() {
 # leave on their own, then stop this prefix only - wineserver is prefix-scoped, so another Wine
 # install on the same machine keeps its own processes.
 stop_container() {
-  # Both the watchdog and the normal exit path can reach this, and a second drain would signal a
-  # session the first one is already retiring. mkdir is atomic, so exactly one caller owns it.
-  mkdir "$TEARDOWN_MARKER" 2>/dev/null || return 0
   wine wineserver -w > /dev/null 2>&1 &
   local waiter=$!
   for _ in {1.."${SW_SHUTDOWN_GRACE:-30}"}; do
@@ -127,25 +123,38 @@ stop_container() {
   fi
 }
 
-# A force-quit or a crash can leave CATSTART blocked in a call that never returns, and then the
-# drain below is never reached and the whole container outlives the app. Watch the CAD process
-# itself so the teardown happens even while this script is still waiting on CATSTART. Another
-# Wine install's SLDWORKS.exe also matches this name, which only ever delays the watchdog - the
-# normal drain below still stops this prefix, so a foreign match cannot leave processes behind.
+cad_running_in_prefix() {
+  local pid mapped drive="$WINEPREFIX/drive_c"
+  drive=${drive:A}
+  for pid in ${(f)"$(pgrep -if 'sldworks[.]exe' || true)"}; do
+    for mapped in ${(f)"$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null)"}; do
+      if [[ "$mapped" == "n$drive/"* && "${mapped:l}" == */sldworks.exe ]]; then
+        return 0
+      fi
+    done
+  done
+  return 1
+}
+
+# A force-quit or a crash can leave CATSTART blocked in a call that never returns. Watch
+# the CAD executable mapped from this prefix so another open SolidWorks session can't
+# arm teardown during sign-in or delay it after this session has exited.
 (
   # Only tear down a session that actually started. A launch parked on a login page can leave
   # CAD unborn for longer than any wait here, and retiring the launcher chain underneath it
   # would kill a sign-in the user is still working on.
   seen=0
   for _ in {1..900}; do
-    if pgrep -f 'sldworks.exe' > /dev/null 2>&1; then seen=1; break; fi
+    if cad_running_in_prefix; then seen=1; break; fi
     sleep 1
   done
   if [[ "$seen" == 1 ]]; then
-    while pgrep -f 'sldworks.exe' > /dev/null 2>&1; do
+    while cad_running_in_prefix; do
       sleep 2
     done
-    stop_container
+    if mkdir "$TEARDOWN_MARKER" 2>/dev/null; then
+      stop_container
+    fi
   fi
 ) &
 watchdog=$!
@@ -154,7 +163,13 @@ wine "$W\\CATSTART.exe" -run "SWXDesktopLauncher.exe" \
     -object "--AppName=\"SWXCSWK_AP\" -tenant=$TENANT  -monoapp -3DRegistryURL=$REGISTRY" -nowindow \
     >> "$LOG_DIR/solidworks-run.log" 2>&1
 launch_status=$?
-kill "$watchdog" 2>/dev/null
-wait "$watchdog" 2>/dev/null
-stop_container
+# Claim the drain before interrupting the watchdog. If it already owns the claim, let it finish.
+if mkdir "$TEARDOWN_MARKER" 2>/dev/null; then
+  kill "$watchdog" 2>/dev/null
+  wait "$watchdog" 2>/dev/null
+  stop_container
+else
+  wait "$watchdog" 2>/dev/null
+fi
+rmdir "$TEARDOWN_MARKER" "$TEARDOWN_DIR" 2>/dev/null
 exit "$launch_status"
