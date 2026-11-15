@@ -7,7 +7,7 @@
 #  - opengl32: simple GL calls batched into one PE/unix transition (WINE_GL_BATCH=0 disables).
 #  - gdi32: render the SolidWorks search results without a trailing NUL glyph.
 #  - win32u: present the SolidWorks status bar after paint, close embedded browser windows,
-#    and preserve mouse capture during live resize.
+#    preserve mouse capture during live resize, and repaint the newly active viewport after closing a document.
 # Stop the selected prefix before installing. Only Wine's own DLLs change (gdi32 is a Wine
 # builtin, so its patched PE goes in the bundle and in the prefix); vendor DLLs are untouched.
 # Each replaced file keeps its original next to it as <name>.stock.
@@ -81,6 +81,8 @@ grep -q destroy_window_with_notification "$SRC/dlls/win32u/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-browser-destroy.patch"
 grep -q is_solidworks_browser_on_another_thread "$SRC/dlls/win32u/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-browser-layout.patch"
+grep -q repaint_solidworks_active_view "$SRC/dlls/win32u/window.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-mdi-repaint.patch"
 grep -q 'Only that loop should release its capture' "$SRC/dlls/win32u/menu.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-preserve-sizing-capture.patch"
 # Apply or remove the optional embedded login changes on the existing build tree.

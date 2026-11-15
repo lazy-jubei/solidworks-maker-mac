@@ -1,0 +1,184 @@
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -938,29 +938,34 @@
+ }
+
+ /*******************************************************************
+- *           list_window_children
++ *           list_windows
+  *
+- * Build an array of the children of a given window. The array must be
+- * freed with free(). Returns NULL when no windows are found.
++ * Build an array of immediate children or all descendants. The caller
++ * frees the array. A null parent enumerates top-level windows.
+  */
+-HWND *list_window_children( HWND hwnd )
++static HWND *list_windows( HWND hwnd, BOOL descendants )
+ {
+     HWND *list;
+     ULONG size = 128;
+     NTSTATUS status;
+
+-    if (hwnd && !(hwnd = get_window_relative( hwnd, GW_CHILD ))) return NULL;
++    if (hwnd && !descendants && !(hwnd = get_window_relative( hwnd, GW_CHILD ))) return NULL;
+
+     for (;;)
+     {
+         if (!(list = malloc( size * sizeof(HWND) ))) return NULL;
+-        status = NtUserBuildHwndList( 0, hwnd, FALSE, TRUE, 0, size, list, &size );
++        status = NtUserBuildHwndList( 0, hwnd, descendants, TRUE, 0, size, list, &size );
+         if (!status && size) break;
+         free( list );
+         if (status != STATUS_BUFFER_TOO_SMALL) return NULL;
+     }
+     list[size - 1] = 0;
+     return list;
++}
++
++HWND *list_window_children( HWND hwnd )
++{
++    return list_windows( hwnd, FALSE );
+ }
+
+ /*****************************************************************
+@@ -5379,22 +5384,27 @@
+
+     return CopyImage( ret, IMAGE_ICON, 0, 0, 0 );
+ }
++
++static BOOL is_solidworks_process(void)
++{
++    const WCHAR *image = RtlGetCurrentPeb()->ProcessParameters->ImagePathName.Buffer;
++    const WCHAR *basename;
+
++    if (!image) return FALSE;
++    basename = wcsrchr( image, '\\' );
++    return !wcsicmp( basename ? basename + 1 : image, u"sldworks.exe" );
++}
++
+ static BOOL is_solidworks_browser_on_another_thread( HWND hwnd )
+ {
+     static const WCHAR browser_class[] = u"Chrome_WidgetWin_1";
+     WCHAR buffer[ARRAY_SIZE(browser_class)];
+     UNICODE_STRING name = {.Buffer = buffer, .MaximumLength = sizeof(buffer)};
+-    const WCHAR *image, *basename;
+     DWORD owner, pid;
+
+     owner = get_window_thread( hwnd, &pid );
+-    if (!owner || owner == GetCurrentThreadId() || pid != GetCurrentProcessId()) return FALSE;
+-
+-    image = RtlGetCurrentPeb()->ProcessParameters->ImagePathName.Buffer;
+-    if (!image) return FALSE;
+-    basename = wcsrchr( image, '\\' );
+-    if (wcsicmp( basename ? basename + 1 : image, u"sldworks.exe" )) return FALSE;
++    if (!owner || owner == GetCurrentThreadId() || pid != GetCurrentProcessId() ||
++        !is_solidworks_process()) return FALSE;
+
+     return NtUserGetClassName( hwnd, FALSE, &name ) == ARRAY_SIZE(browser_class) - 1 &&
+            !memcmp( buffer, browser_class, sizeof(buffer) - sizeof(WCHAR) );
+@@ -5638,10 +5648,71 @@
+     destroy_window( hwnd );
+     return TRUE;
+ }
++
++static BOOL is_solidworks_mdi_client( HWND hwnd )
++{
++    static const WCHAR client_class[] = u"swMdiClient";
++    static const WCHAR caption[] = u"SOLIDWORKS Design Professional";
++    WCHAR buffer[ARRAY_SIZE(client_class)], title[64];
++    UNICODE_STRING name = {.Buffer = buffer, .MaximumLength = sizeof(buffer)};
++    HWND root;
+
++    if (!hwnd || !is_current_thread_window( hwnd ) ||
++        NtUserGetClassName( hwnd, FALSE, &name ) != ARRAY_SIZE(client_class) - 1 ||
++        memcmp( buffer, client_class, sizeof(buffer) - sizeof(WCHAR) )) return FALSE;
++    root = NtUserGetAncestor( hwnd, GA_ROOT );
++    return root && root != hwnd && NtUserInternalGetWindowText( root, title, ARRAY_SIZE(title) ) &&
++           !wcsncmp( title, caption, ARRAY_SIZE(caption) - 1 );
++}
++
++void repaint_solidworks_active_view( HWND client )
++{
++    static const WCHAR view_class[] = u"Afx:0000000140000000:2b:";
++    WCHAR buffer[128];
++    UNICODE_STRING name = {.Buffer = buffer, .MaximumLength = sizeof(buffer)};
++    HWND child, *views, viewport = 0;
++    ULONGLONG largest = 0;
++    unsigned int i;
++
++    NtUserKillSystemTimer( client, SYSTEM_TIMER_SOLIDWORKS_VIEW );
++    if (!is_solidworks_process() || !is_solidworks_mdi_client( client )) return;
++    child = (HWND)send_message( client, WM_MDIGETACTIVE, 0, 0 );
++    if (!child || !is_window_visible( child ) || !(views = list_windows( child, TRUE ))) return;
++    for (i = 0; views[i]; i++)
++    {
++        HWND view = views[i];
++        RECT rect;
++        ULONGLONG area;
++        if (!is_current_thread_window( view ) || !is_window_visible( view ) ||
++            NtUserGetClassName( view, FALSE, &name ) < ARRAY_SIZE(view_class) - 1 ||
++            memcmp( buffer, view_class, sizeof(view_class) - sizeof(WCHAR) ) ||
++            !get_client_rect( view, &rect, get_thread_dpi() ) || rect.right <= 0 || rect.bottom <= 100)
++            continue;
++        area = (ULONGLONG)rect.right * rect.bottom;
++        if (area <= largest) continue;
++        largest = area;
++        viewport = view;
++    }
++    free( views );
++    if (viewport)
++        NtUserRedrawWindow( viewport, NULL, 0, RDW_INVALIDATE | RDW_NOCHILDREN );
++}
++
+ BOOL WINAPI NtUserDestroyWindow( HWND hwnd )
+ {
+-    return user_destroy_window( hwnd, TRUE );
++    HWND client = 0;
++    BOOL done;
++
++    if (is_solidworks_process() && (get_window_long( hwnd, GWL_EXSTYLE ) & WS_EX_MDICHILD))
++    {
++        HWND parent = get_parent( hwnd );
++        if (is_solidworks_mdi_client( parent )) client = parent;
++    }
++    done = user_destroy_window( hwnd, TRUE );
++    /* The next document's viewport is laid out again after the MDI switch. */
++    if (done && client && is_window( client ))
++        NtUserSetSystemTimer( client, SYSTEM_TIMER_SOLIDWORKS_VIEW, 100 );
++    return done;
+ }
+
+ /*****************************************************************************
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -4052,6 +4052,10 @@
+         {
+             case SYSTEM_TIMER_CARET:
+                 toggle_caret( msg->hwnd );
++                return 0;
++
++            case SYSTEM_TIMER_SOLIDWORKS_VIEW:
++                repaint_solidworks_active_view( msg->hwnd );
+                 return 0;
+
+             case SYSTEM_TIMER_TRACK_MOUSE:
+--- a/dlls/win32u/ntuser_private.h
++++ b/dlls/win32u/ntuser_private.h
+@@ -34,6 +34,7 @@
+
+ enum system_timer_id
+ {
++    SYSTEM_TIMER_SOLIDWORKS_VIEW = 0xfff9,
+     SYSTEM_TIMER_TRACK_MOUSE = 0xfffa,
+     SYSTEM_TIMER_CARET = 0xffff,
+ };
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -277,6 +277,7 @@
+ extern void destroy_thread_windows(void);
+ extern LRESULT destroy_window( HWND hwnd );
+ extern LRESULT destroy_window_with_notification( HWND hwnd );
++extern void repaint_solidworks_active_view( HWND client );
+ extern BOOL get_client_rect( HWND hwnd, RECT *rect, struct ratio dpi );
+ extern BOOL get_present_rect( HWND hwnd, RECT *rect, struct ratio dpi );
+ extern HWND get_desktop_window(void);
