@@ -1,0 +1,76 @@
+--- a/dlls/win32u/dce.c
++++ b/dlls/win32u/dce.c
+@@ -678,6 +678,31 @@
+               NtGetTickCount() - status_paint_started < STATUS_PAINT_LIMIT;
+     pthread_mutex_unlock( &status_paint_lock );
+     return pending;
++}
++
++/* The Options page scrolls its child HWNDs over a shared surface. Finish
++ * repainting the page before presenting any of the intermediate positions. */
++static HWND solidworks_options_scroll_root;
++
++static BOOL begin_solidworks_options_scroll( HWND hwnd )
++{
++    static const WCHAR title_prefix[] = u"System Options - ";
++    WCHAR buffer[ARRAY_SIZE(title_prefix)];
++    const WCHAR *image = RtlGetCurrentPeb()->ProcessParameters->ImagePathName.Buffer;
++    const WCHAR *basename;
++    HWND root, idle = 0;
++
++    if (!image) return FALSE;
++    basename = wcsrchr( image, '\\' );
++    if (wcsicmp( basename ? basename + 1 : image, u"sldworks.exe" )) return FALSE;
++    root = NtUserGetAncestor( hwnd, GA_ROOT );
++    if (!root || root == hwnd ||
++        NtUserInternalGetWindowText( root, buffer, ARRAY_SIZE(buffer) ) != ARRAY_SIZE(buffer) - 1 ||
++        memcmp( buffer, title_prefix, sizeof(buffer) - sizeof(WCHAR) ))
++        return FALSE;
++
++    return __atomic_compare_exchange_n( &solidworks_options_scroll_root, &idle, root, FALSE,
++                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE );
+ }
+
+ void window_surface_flush( struct window_surface *surface )
+@@ -691,7 +716,8 @@
+
+     window_surface_lock( surface );
+
+-    if (solidworks_status_paint_pending( surface->hwnd ))
++    if (solidworks_status_paint_pending( surface->hwnd ) ||
++        (surface->hwnd && __atomic_load_n( &solidworks_options_scroll_root, __ATOMIC_ACQUIRE ) == surface->hwnd))
+     {
+         window_surface_unlock( surface );
+         return;
+@@ -2163,7 +2189,7 @@
+                                  RECT *update_rect, UINT flags )
+ {
+     BOOL update = update_rect || update_rgn || flags & (SW_INVALIDATE | SW_ERASE);
+-    BOOL own_rgn = TRUE, move_caret = FALSE;
++    BOOL own_rgn = TRUE, move_caret = FALSE, options_scroll = FALSE;
+     HRGN temp_rgn, winupd_rgn = 0;
+     INT retval = NULLREGION;
+     HWND caret_hwnd = NULL;
+@@ -2202,6 +2228,9 @@
+         DWORD style = get_window_long( hwnd, GWL_STYLE );
+         DWORD dcxflags = 0;
+
++        if (!dx && dy && (flags & SW_SCROLLCHILDREN) && (flags & SW_INVALIDATE))
++            options_scroll = begin_solidworks_options_scroll( hwnd );
++
+         caret_hwnd = fix_caret( hwnd, &rc, dx, dy, flags, &move_caret, &new_caret_pos );
+         if (caret_hwnd) NtUserHideCaret( caret_hwnd );
+
+@@ -2305,5 +2334,12 @@
+     if (caret_hwnd) NtUserShowCaret( caret_hwnd );
+     if (own_rgn && update_rgn) NtGdiDeleteObjectApp( update_rgn );
+
++    if (options_scroll)
++    {
++        NtUserRedrawWindow( hwnd, NULL, 0, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW );
++        __atomic_store_n( &solidworks_options_scroll_root, 0, __ATOMIC_RELEASE );
++        flush_window_surfaces( FALSE );
++    }
++
+     return retval;
+ }

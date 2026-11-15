@@ -77,6 +77,9 @@ grep -q wine_batch_execute "$SRC/dlls/opengl32/unix_thunks.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/opengl32-batch-calls.patch"
 grep -q begin_solidworks_status_paint "$SRC/dlls/win32u/dce.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-status-paint.patch"
+# Present the Options page after its scrolled controls repaint.
+grep -q begin_solidworks_options_scroll "$SRC/dlls/win32u/dce.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-options-scroll.patch"
 grep -q destroy_window_with_notification "$SRC/dlls/win32u/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-browser-destroy.patch"
 grep -q is_solidworks_browser_on_another_thread "$SRC/dlls/win32u/window.c" \
