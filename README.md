@@ -65,7 +65,10 @@ identical output. The 3D view is drawn directly by the GPU and clipped so the Fe
 task pane and toolbars stay visible; window images skip a color conversion. On an Intel Mac
 with an RX 6900 XT, rotating a large mold assembly went from about 2.5 to about 15 redraws a
 second, and a simple part from about 24 to about 70. `WINE_GL_BATCH=0` and `SW_OPENGL_GDI=1`
-switch back to the older paths if something draws wrong. With more than one display, windows can
+switch back to the older paths if something draws wrong. While a window is being resized the strip
+the app has not painted yet shows in the window colour, as it does on Windows;
+`SW_MAC_RESIZE_GRAVITY=0` restores the older behaviour of stretching the previous frame into it.
+With more than one display, windows can
 be dragged onto any of them, and menus and dialogs open on the display SolidWorks is on.
 
 Licensed under [LGPL-2.1-or-later](LICENSE). [Third-party notices](THIRD_PARTY_NOTICES.md).

@@ -1,7 +1,9 @@
 #!/bin/zsh
 # Build and install SOLIDWORKS' Mac graphics pieces into the selected Wine bundle:
 #  - winemac.so: GL views clipped to their visible region (the FeatureManager stays visible),
-#    optional GDI presentation (SW_OPENGL_GDI=1), sRGB windows, multi-monitor fixes;
+#    optional GDI presentation (SW_OPENGL_GDI=1), sRGB windows, multi-monitor fixes, and a live
+#    resize that shows the window colour where the app has not painted yet instead of a stretched
+#    copy of the previous frame;
 #  - opengl32: simple GL calls batched into one PE/unix transition (WINE_GL_BATCH=0 disables).
 #  - gdi32: render the SolidWorks search results without a trailing NUL glyph.
 # Stop the selected prefix before installing. Only Wine's own DLLs change (gdi32 is a Wine
@@ -57,6 +59,10 @@ grep -q macdrv_ScrollDC "$SRC/dlls/winemac.drv/gdi.c" \
 # Keep SolidWorks status tooltips within the display work area before showing them.
 grep -q 'paintSettleMs:.*constrainTip:' "$SRC/dlls/winemac.drv/cocoa_window.m" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-tooltip-screen.patch"
+# Show the strip a live resize exposes in the window colour instead of a stretched old frame
+# (SW_MAC_RESIZE_GRAVITY=0 restores the stretching).
+grep -q macdrv_resize_band_background "$SRC/dlls/winemac.drv/cocoa_window.m" \
+  || python3 "$ROOT/scripts/patches/winemac-resize-layer-gravity.py" "$SRC"
 # The search result passes a terminating NUL in the displayed character count.
 grep -q 'includes the terminator when painting' "$SRC/dlls/gdi32/text.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/gdi32-solidworks-search-label.patch"
