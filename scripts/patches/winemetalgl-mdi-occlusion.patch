@@ -1,0 +1,79 @@
+--- a/src/wine/pe/winemetalgl.c
++++ b/src/wine/pe/winemetalgl.c
+@@ -485,23 +485,65 @@
+     *(BOOL *)param = GetEnvironmentVariableA( "WINEMETALGL_CLIP_SIBLINGS", value, sizeof(value) ) == 1 &&
+                     value[0] == '1';
+     return TRUE;
++}
++
++/* A SolidWorks MDI viewport may render during WM_PAINT using an owned DC.
++ * Its paint clip describes only the updated pixels, so using it for a
++ * persistent Metal layer mask can hide the already-rendered model. */
++static void refresh_mdi_occlusion( HWND hwnd, HWND root, HRGN visible, POINT center )
++{
++    HWND ancestor, parent;
++    HDC query_dc;
++    HRGN queried;
++    DWORD flags = DCX_CACHE, style;
++    WCHAR class_name[32];
++
++    if (PtInRegion( visible, center.x, center.y ) ||
++        !(GetClassLongW( hwnd, GCL_STYLE ) & (CS_OWNDC | CS_CLASSDC))) return;
++
++    for (ancestor = hwnd; ancestor && ancestor != root; ancestor = GetAncestor( ancestor, GA_PARENT ))
++    {
++        if (GetWindowLongW( ancestor, GWL_EXSTYLE ) & WS_EX_MDICHILD) break;
++    }
++    if (!ancestor || ancestor == root || !(parent = GetAncestor( ancestor, GA_PARENT )) ||
++        !GetClassNameW( parent, class_name, ARRAYSIZE(class_name) ) ||
++        lstrcmpiW( class_name, L"swMdiClient" )) return;
++
++    style = GetWindowLongW( hwnd, GWL_STYLE );
++    if (style & WS_CLIPSIBLINGS) flags |= DCX_CLIPSIBLINGS;
++    if ((style & (WS_CLIPCHILDREN | WS_MINIMIZE)) == WS_CLIPCHILDREN) flags |= DCX_CLIPCHILDREN;
++    if (!(query_dc = GetDCEx( hwnd, NULL, flags ))) return;
++    if ((queried = CreateRectRgn( 0, 0, 0, 0 )))
++    {
++        if (GetRandomRgn( query_dc, queried, 4 /* SYSRGN */ ) == 1 &&
++            PtInRegion( queried, center.x, center.y ))
++            CombineRgn( visible, queried, NULL, RGN_COPY );
++        DeleteObject( queried );
++    }
++    ReleaseDC( hwnd, query_dc );
+ }
+
+ /* Prefer Wine's computed system clipping to repeated sibling queries.
+  * The system region is in screen coordinates and excludes higher GDI panes. */
+-static BOOL dc_clip_holes( HDC dc, HWND top_level, const RECT *clip,
++static BOOL dc_clip_holes( HDC dc, HWND hwnd, HWND top_level, const RECT *clip,
+                            struct wmgl_window_placement *placement )
+ {
+     char buffer[sizeof(RGNDATAHEADER) + WMGL_MAX_HOLES * sizeof(RECT)] __attribute__((aligned(8)));
+     RGNDATA *data = (RGNDATA *)buffer;
+     HRGN visible = CreateRectRgn( 0, 0, 0, 0 ), hidden = NULL;
+-    POINT origin = {0};
++    POINT origin = {0}, center;
+     BOOL ok = FALSE;
+     RECT *rect;
+     unsigned int i;
+
+     if (!visible || GetRandomRgn( dc, visible, 4 /* SYSRGN */ ) != 1) goto done;
+     MapWindowPoints( top_level, HWND_DESKTOP, &origin, 1 );
++    if (placement->visible && !IsRectEmpty( clip ))
++    {
++        center.x = origin.x + clip->left + (clip->right - clip->left) / 2;
++        center.y = origin.y + clip->top + (clip->bottom - clip->top) / 2;
++        refresh_mdi_occlusion( hwnd, top_level, visible, center );
++    }
+     if (!OffsetRgn( visible, -origin.x, -origin.y )) goto done;
+     if (!(hidden = CreateRectRgnIndirect( clip ))) goto done;
+     if (!CombineRgn( hidden, hidden, visible, RGN_DIFF ) ||
+@@ -563,7 +605,7 @@
+     placement->clip_height = clip.bottom - clip.top;
+     placement->visible = IsWindowVisible( hwnd );
+     InitOnceExecuteOnce( &clipping_init, init_sibling_clipping, &clip_siblings, NULL );
+-    if (clip_siblings && dc && dc_clip_holes( dc, top_level, &clip, placement ))
++    if (clip_siblings && dc && dc_clip_holes( dc, hwnd, top_level, &clip, placement ))
+     {
+         SetThreadDpiAwarenessContext( awareness );
+         return;
