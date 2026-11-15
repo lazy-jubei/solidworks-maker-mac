@@ -1,0 +1,82 @@
+--- a/dlls/win32u/window.c
++++ b/dlls/win32u/window.c
+@@ -5363,12 +5363,35 @@
+     return CopyImage( ret, IMAGE_ICON, 0, 0, 0 );
+ }
+
++/* Keep the foreign browser subtree on its owning thread during teardown. */
++static BOOL defer_solidworks_browser_destroy( HWND hwnd )
++{
++    static const WCHAR browser_class[] = u"Chrome_WidgetWin_1";
++    WCHAR buffer[ARRAY_SIZE(browser_class)];
++    UNICODE_STRING name = {.Buffer = buffer, .MaximumLength = sizeof(buffer)};
++    const WCHAR *image, *basename;
++    DWORD owner, pid;
++
++    owner = get_window_thread( hwnd, &pid );
++    if (!owner || owner == GetCurrentThreadId() || pid != GetCurrentProcessId()) return FALSE;
++
++    image = RtlGetCurrentPeb()->ProcessParameters->ImagePathName.Buffer;
++    if (!image) return FALSE;
++    basename = wcsrchr( image, '\\' );
++    if (wcsicmp( basename ? basename + 1 : image, u"sldworks.exe" )) return FALSE;
++
++    return NtUserGetClassName( hwnd, FALSE, &name ) == ARRAY_SIZE(browser_class) - 1 &&
++           !memcmp( buffer, browser_class, sizeof(buffer) - sizeof(WCHAR) );
++}
++
+ /***********************************************************************
+  *           send_destroy_message
+  */
+ static void send_destroy_message( HWND hwnd, BOOL winevent )
+ {
+     GUITHREADINFO info;
++
++    if (defer_solidworks_browser_destroy( hwnd )) return;
+
+     info.cbSize = sizeof(info);
+     if (NtUserGetGUIThreadInfo( GetCurrentThreadId(), &info ))
+@@ -5461,7 +5484,8 @@
+             if (is_current_thread_window( children[i] ))
+                 destroy_window( children[i] );
+             else
+-                NtUserMessageCall( children[i], WM_WINE_DESTROYWINDOW, 0, 0,
++                NtUserMessageCall( children[i], WM_WINE_DESTROYWINDOW,
++                                   defer_solidworks_browser_destroy( children[i] ), 0,
+                                    0, NtUserSendNotifyMessage, FALSE );
+         }
+         free( children );
+@@ -5519,6 +5543,13 @@
+ /***********************************************************************
+  *           NtUserDestroyWindow (win32u.@)
+  */
++/* Called on the owner after the parent sent the asynchronous destroy request. */
++LRESULT destroy_window_with_notification( HWND hwnd )
++{
++    if (is_window( hwnd )) send_destroy_message( hwnd, FALSE );
++    return is_window( hwnd ) ? destroy_window( hwnd ) : 0;
++}
++
+ static BOOL user_destroy_window( HWND hwnd, BOOL winevent )
+ {
+     BOOL is_child;
+--- a/dlls/win32u/message.c
++++ b/dlls/win32u/message.c
+@@ -2185,6 +2185,7 @@
+     switch(msg)
+     {
+     case WM_WINE_DESTROYWINDOW:
++        if (wparam) return destroy_window_with_notification( hwnd );
+         return destroy_window( hwnd );
+     case WM_WINE_SETWINDOWPOS:
+         if (is_desktop_window( hwnd )) return 0;
+--- a/dlls/win32u/win32u_private.h
++++ b/dlls/win32u/win32u_private.h
+@@ -276,6 +276,7 @@
+ extern BOOL client_to_screen( HWND hwnd, POINT *pt );
+ extern void destroy_thread_windows(void);
+ extern LRESULT destroy_window( HWND hwnd );
++extern LRESULT destroy_window_with_notification( HWND hwnd );
+ extern BOOL get_client_rect( HWND hwnd, RECT *rect, struct ratio dpi );
+ extern BOOL get_present_rect( HWND hwnd, RECT *rect, struct ratio dpi );
+ extern HWND get_desktop_window(void);
