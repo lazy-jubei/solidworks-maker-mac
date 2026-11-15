@@ -1,0 +1,125 @@
+--- a/dlls/win32u/dce.c
++++ b/dlls/win32u/dce.c
+@@ -610,6 +610,76 @@
+     pthread_mutex_unlock( &surface->mutex );
+ }
+
++/* SolidWorks paints its status bar into the top-level surface. Menu and tooltip
++ * messages can cause other threads to flush between the erase and EndPaint. */
++#define STATUS_PAINT_LIMIT 80 /* milliseconds before normal flushing resumes */
++
++static pthread_mutex_t status_paint_lock = PTHREAD_MUTEX_INITIALIZER;
++static HWND status_paint_root;
++static HWND status_paint_window;
++static DWORD status_paint_owner;
++static DWORD status_paint_started;
++
++static BOOL begin_solidworks_status_paint( HWND hwnd )
++{
++    static const WCHAR status_class[] = u"msctls_statusbar32";
++    WCHAR buffer[ARRAY_SIZE(status_class)];
++    UNICODE_STRING name = {.Buffer = buffer, .MaximumLength = sizeof(buffer)};
++    const WCHAR *image, *basename;
++    DWORD now;
++    HWND root;
++    BOOL started = FALSE;
++
++    if (NtUserGetClassName( hwnd, FALSE, &name ) != ARRAY_SIZE(status_class) - 1 ||
++        memcmp( buffer, status_class, sizeof(buffer) - sizeof(WCHAR) ))
++        return FALSE;
++
++    image = RtlGetCurrentPeb()->ProcessParameters->ImagePathName.Buffer;
++    if (!image) return FALSE;
++    basename = wcsrchr( image, '\\' );
++    if (wcsicmp( basename ? basename + 1 : image, u"sldworks.exe" )) return FALSE;
++    root = NtUserGetAncestor( hwnd, GA_ROOT );
++    if (!root || root == hwnd) return FALSE;
++
++    now = NtGetTickCount();
++    pthread_mutex_lock( &status_paint_lock );
++    if (!status_paint_window || now - status_paint_started >= STATUS_PAINT_LIMIT)
++    {
++        status_paint_window = hwnd;
++        status_paint_owner = GetCurrentThreadId();
++        status_paint_started = now;
++        __atomic_store_n( &status_paint_root, root, __ATOMIC_RELEASE );
++        started = TRUE;
++    }
++    pthread_mutex_unlock( &status_paint_lock );
++    return started;
++}
++
++static void end_solidworks_status_paint( HWND hwnd )
++{
++    if (!__atomic_load_n( &status_paint_root, __ATOMIC_ACQUIRE )) return;
++
++    pthread_mutex_lock( &status_paint_lock );
++    if (status_paint_window == hwnd && status_paint_owner == GetCurrentThreadId())
++    {
++        status_paint_window = 0;
++        __atomic_store_n( &status_paint_root, 0, __ATOMIC_RELEASE );
++    }
++    pthread_mutex_unlock( &status_paint_lock );
++}
++
++static BOOL solidworks_status_paint_pending( HWND hwnd )
++{
++    BOOL pending;
++
++    if (!hwnd || __atomic_load_n( &status_paint_root, __ATOMIC_ACQUIRE ) != hwnd) return FALSE;
++    pthread_mutex_lock( &status_paint_lock );
++    pending = status_paint_root == hwnd &&
++              NtGetTickCount() - status_paint_started < STATUS_PAINT_LIMIT;
++    pthread_mutex_unlock( &status_paint_lock );
++    return pending;
++}
++
+ void window_surface_flush( struct window_surface *surface )
+ {
+     char color_buf[FIELD_OFFSET( BITMAPINFO, bmiColors[256] )];
+@@ -620,6 +690,12 @@
+     void *color_bits;
+
+     window_surface_lock( surface );
++
++    if (solidworks_status_paint_pending( surface->hwnd ))
++    {
++        window_surface_unlock( surface );
++        return;
++    }
+
+     /* align bounds / dirty rect to help with 1bpp shape bitmap updates */
+     bounds.left = surface->bounds.left & ~7;
+@@ -1769,7 +1845,7 @@
+ {
+     HRGN hrgn;
+     HDC hdc;
+-    BOOL erase;
++    BOOL erase, status_started;
+     RECT rect;
+     UINT flags = UPDATE_NONCLIENT | UPDATE_ERASE | UPDATE_PAINT | UPDATE_INTERNALPAINT | UPDATE_NOCHILDREN;
+
+@@ -1777,6 +1853,7 @@
+
+     if (!(hrgn = send_ncpaint( hwnd, NULL, &flags ))) return 0;
+
++    status_started = ps && begin_solidworks_status_paint( hwnd );
+     erase = send_erase( hwnd, flags, hrgn, &rect, &hdc );
+
+     TRACE( "hdc = %p box = (%s), fErase = %d\n", hdc, wine_dbgstr_rect(&rect), erase );
+@@ -1786,6 +1863,7 @@
+         release_dc( hwnd, hdc, TRUE );
+         return 0;
+     }
++    if (status_started && !hdc) end_solidworks_status_paint( hwnd );
+     ps->fErase = erase;
+     ps->rcPaint = rect;
+     ps->hdc = hdc;
+@@ -1797,6 +1875,7 @@
+  */
+ BOOL WINAPI NtUserEndPaint( HWND hwnd, const PAINTSTRUCT *ps )
+ {
++    if (ps) end_solidworks_status_paint( hwnd );
+     NtUserShowCaret( hwnd );
+     flush_window_surfaces( FALSE );
+     if (!ps) return FALSE;

@@ -6,6 +6,7 @@
 #    copy of the previous frame;
 #  - opengl32: simple GL calls batched into one PE/unix transition (WINE_GL_BATCH=0 disables).
 #  - gdi32: render the SolidWorks search results without a trailing NUL glyph.
+#  - win32u: present the SolidWorks status bar after its paint finishes.
 # Stop the selected prefix before installing. Only Wine's own DLLs change (gdi32 is a Wine
 # builtin, so its patched PE goes in the bundle and in the prefix); vendor DLLs are untouched.
 # Each replaced file keeps its original next to it as <name>.stock.
@@ -69,10 +70,13 @@ grep -q 'includes the terminator when painting' "$SRC/dlls/gdi32/text.c" \
 # One PE/unix transition per batch of simple GL calls instead of one per call.
 grep -q wine_batch_execute "$SRC/dlls/opengl32/unix_thunks.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/opengl32-batch-calls.patch"
+grep -q begin_solidworks_status_paint "$SRC/dlls/win32u/dce.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-status-paint.patch"
 export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/winemac.drv/winemac.so dlls/opengl32/opengl32.so \
-  dlls/opengl32/x86_64-windows/opengl32.dll dlls/gdi32/x86_64-windows/gdi32.dll > "$ROOT/logs/winemac-gdi-build.log" 2>&1
+  dlls/opengl32/x86_64-windows/opengl32.dll dlls/gdi32/x86_64-windows/gdi32.dll \
+  dlls/win32u/win32u.so > "$ROOT/logs/winemac-gdi-build.log" 2>&1
 python3 - "$OBJ/dlls/winemac.drv/winemac.so" "$WINE_APP/Contents/Resources/wine/lib/wine/x86_64-unix/winemac.so" <<'PY'
 from pathlib import Path
 import hashlib,shutil,subprocess,sys
@@ -85,7 +89,7 @@ tmp.replace(dst)
 dst.with_name(dst.name+'.gdi.sha256').write_text(hashlib.sha256(dst.read_bytes()).hexdigest()+'\n')
 print('Installed Mac GDI presentation driver; run-solidworks.sh will enable it for this bundle.')
 PY
-# opengl32's PE and unix halves share a call table, so both are replaced together (originals kept).
+# Keep the original modules alongside their signed replacements.
 python3 - "$OBJ/dlls" "$WINE_APP/Contents/Resources/wine/lib/wine" "$WINEPREFIX/drive_c/windows/system32" <<'PY'
 from pathlib import Path
 import shutil,subprocess,sys
@@ -94,12 +98,13 @@ pairs=[(obj/'opengl32/x86_64-windows/opengl32.dll',lib/'x86_64-windows/opengl32.
        (obj/'opengl32/opengl32.so',lib/'x86_64-unix/opengl32.so'),
        (obj/'opengl32/x86_64-windows/opengl32.dll',system32/'opengl32.dll'),
        (obj/'gdi32/x86_64-windows/gdi32.dll',lib/'x86_64-windows/gdi32.dll'),
-       (obj/'gdi32/x86_64-windows/gdi32.dll',system32/'gdi32.dll')]
+       (obj/'gdi32/x86_64-windows/gdi32.dll',system32/'gdi32.dll'),
+       (obj/'win32u/win32u.so',lib/'x86_64-unix/win32u.so')]
 for src,dst in pairs:
     backup=dst.with_name(dst.name+'.stock')
     if dst.exists() and not backup.exists():shutil.copy2(dst,backup)
     tmp=dst.with_name(dst.name+'.new');shutil.copy2(src,tmp)
     if dst.suffix=='.so':subprocess.run(['/usr/bin/codesign','--force','--sign','-',str(tmp)],check=True)
     tmp.replace(dst)
-print('Installed batched opengl32 and the SolidWorks search text fix.')
+print('Installed batched OpenGL, SolidWorks search text, and status bar paint fixes.')
 PY
