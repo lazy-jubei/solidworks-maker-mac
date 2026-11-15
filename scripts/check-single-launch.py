@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Check duplicate/startup guards and lock lifetime using fake probe/runner commands."""
+import fcntl
 import os
 from pathlib import Path
 import select
 import shutil
 import subprocess
 import sys
+import time
 from tempfile import TemporaryDirectory
 
 root = Path(__file__).resolve().parent.parent
@@ -80,4 +82,24 @@ with TemporaryDirectory(prefix='sw-single-launch-') as directory:
                            capture_output=True, text=True, timeout=10)
     assert later.returncode == 0 and calls.read_text().splitlines()[-1] == 'probe'
 
-print('Passed: existing session reuse, probe failure refusal, simultaneous/aliased-prefix launches, distinct-prefix isolation, runner failure and stale lock-file recovery. No Wine or CAD executed.')
+
+    # Both prefixes trust the same helper directory. Hold the main prefix's
+    # lock under its canonical path while starting the real monitor.
+    monitor = [sys.executable, str(root / 'scripts/tools/signin-monitor.py'), str(tools)]
+    calls.unlink()
+    with (prefix / '.solidworks-signin-monitor.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        duplicate = subprocess.run(monitor, env=dict(env, WINEPREFIX=str(alias)), timeout=10)
+        assert duplicate.returncode == 0 and not calls.exists()
+        separate = subprocess.Popen(monitor, env=dict(env, WINEPREFIX=str(other_prefix)))
+        try:
+            deadline = time.monotonic() + 5
+            while not calls.exists() and separate.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.05)
+            assert calls.exists(), 'A different prefix should run its sign-in monitor'
+        finally:
+            if separate.poll() is None:
+                separate.terminate()
+                separate.wait(timeout=10)
+
+print('Passed: existing session reuse, probe failure refusal, simultaneous/aliased-prefix launches, distinct-prefix isolation, runner failure, stale lock-file recovery and per-prefix sign-in monitor isolation. No Wine or CAD executed.')
