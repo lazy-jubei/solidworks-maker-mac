@@ -95,6 +95,7 @@ container_processes() {
   local pid root="${WINE_APP:-}/Contents/Resources/wine"
   [[ -d "$root" ]] || root="$(dirname "$(dirname "$(command -v wine 2>/dev/null)")")"
   [[ "$root" == /* ]] || return 0
+  root=${root:A}
   for pid in $(lsof +D "$WINEPREFIX" 2>/dev/null | awk 'NR>1{print $2}' | sort -u || true); do
     if lsof -p "$pid" 2>/dev/null | grep -qF "$root/"; then
       print -r -- "$pid"
@@ -117,7 +118,7 @@ stop_container() {
       sleep .1
     done
   fi
-  wine wineserver -w > /dev/null 2>&1 &
+  wineserver -w > /dev/null 2>&1 &
   local waiter=$!
   for _ in {1.."${SW_SHUTDOWN_GRACE:-30}"}; do
     kill -0 "$waiter" 2>/dev/null || break
@@ -125,7 +126,7 @@ stop_container() {
   done
   if kill -0 "$waiter" 2>/dev/null; then
     print -r -- "SolidWorks exited; stopping leftover Wine processes for $WINEPREFIX" >> "$LOG_DIR/solidworks-run.log"
-    wine wineserver -k > /dev/null 2>&1
+    wineserver -k > /dev/null 2>&1
     wait "$waiter" 2>/dev/null
   fi
   # A force-quit can take the server down before its session does, and `wineserver -k` only
@@ -187,6 +188,11 @@ launch_status=$?
 if mkdir "$TEARDOWN_MARKER" 2>/dev/null; then
   kill "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
+  # CATSTART can return successfully while the CAD process still owns the session.
+  # Keep both the launch lock and its sign-in monitor until that process exits.
+  while cad_running_in_prefix; do
+    sleep 2
+  done
   stop_container
 else
   wait "$watchdog" 2>/dev/null

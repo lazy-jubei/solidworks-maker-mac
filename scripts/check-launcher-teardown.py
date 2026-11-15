@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import time
 from tempfile import TemporaryDirectory
 
 runner = Path(__file__).resolve().with_name("run-solidworks.sh")
@@ -19,6 +20,9 @@ export PATH="$ROOT:$PATH"
 """)
     (root / 'pgrep').write_text('''#!/bin/zsh
 if [[ "$TEST_CASE" == watchdog ]] && mkdir "$TEST_ROOT/seen" 2>/dev/null; then
+    print 778
+fi
+if [[ "$TEST_CASE" == detached && ! -f "$TEST_ROOT/release-cad" ]]; then
     print 778
 fi
 [[ ! -f "$TEST_ROOT/release-foreign" ]] || exit 1
@@ -37,6 +41,10 @@ fi
     (root / 'wine').write_text('''#!/bin/zsh
 case "$1:$2" in
     *CATSTART.exe:*)
+        if [[ "$TEST_CASE" == detached ]]; then
+            touch "$TEST_ROOT/catstart-returned"
+            exit 0
+        fi
         if [[ "$TEST_CASE" == watchdog ]]; then
             for _ in {1..200}; do
                 [[ -f "$TEST_ROOT/waiter" ]] && exit 37
@@ -54,7 +62,15 @@ case "$1:$2" in
         [[ ! -f "$TEST_ROOT/waiter" ]] || exit 99
         exit 37
         ;;
-    wineserver:-w)
+    wineserver:*)
+        print erroneous-wine-wrapper >> "$TEST_ROOT/calls"
+        exit 1
+        ;;
+esac
+''')
+    (root / 'wineserver').write_text('''#!/bin/zsh
+case "$1" in
+    -w)
         if [[ -n "$SW_SIGNIN_SESSION" && ! -f "$SW_SIGNIN_SESSION/stopped" ]]; then
             print monitor-still-running >> "$TEST_ROOT/calls"
         fi
@@ -66,17 +82,17 @@ case "$1:$2" in
         done
         exit 97
         ;;
-    wineserver:-k)
+    -k)
         print stop >> "$TEST_ROOT/calls"
         touch "$TEST_ROOT/stopped"
         ;;
 esac
 ''')
-    for name in ['pgrep', 'curl', 'lsof', 'wine']:
+    for name in ['pgrep', 'curl', 'lsof', 'wine', 'wineserver']:
         (root / name).chmod(0o755)
     env = dict(os.environ, TEST_ROOT=str(root), SW_TENANT='fixture',
                SW_SHUTDOWN_GRACE='3')
-    for test_case in ['watchdog', 'launcher']:
+    for test_case in ['watchdog', 'launcher', 'detached']:
         session = root / test_case
         session.mkdir()
         case_env = dict(env, TEST_CASE=test_case, SW_SIGNIN_SESSION=str(session))
@@ -91,13 +107,25 @@ for _ in {1..200}; do
 done
 exit 1
 '''], env=case_env) as monitor:
-            result = subprocess.run(['/bin/zsh', str(root / runner.name)],
-                                    env=case_env, timeout=16)
+            with subprocess.Popen(['/bin/zsh', str(root / runner.name)], env=case_env) as result:
+                try:
+                    if test_case == 'detached':
+                        deadline = time.monotonic() + 5
+                        while not (root / 'catstart-returned').exists() and time.monotonic() < deadline:
+                            time.sleep(.05)
+                        assert (root / 'catstart-returned').exists()
+                        time.sleep(1)
+                        assert result.poll() is None and not (session / 'stop').exists()
+                        assert not (root / 'waiter').exists()
+                        (root / 'release-cad').touch()
+                    assert result.wait(timeout=16) == (0 if test_case == 'detached' else 37)
+                finally:
+                    if result.poll() is None:
+                        result.kill()
             assert monitor.wait(timeout=2) == 0
-        assert result.returncode == 37, result.returncode
         assert not list((root / 'logs').glob('.container-teardown.*'))
         assert (root / 'calls').read_text().splitlines() == ['wait', 'stop'], (
             test_case, (root / 'calls').read_text())
         for name in ['calls', 'waiter', 'stopped', 'checked-foreign', 'release-foreign']:
             (root / name).unlink(missing_ok=True)
-    print('Watchdog-owned and launcher-owned teardown each stopped the sign-in monitor before draining Wine, with a separate prefix active.')
+    print('The watchdog, launcher failure and detached CAD exit paths each stopped the monitor before draining the correct prefix through native wineserver.')
