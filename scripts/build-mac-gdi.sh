@@ -6,7 +6,8 @@
 #    copy of the previous frame;
 #  - opengl32: simple GL calls batched into one PE/unix transition (WINE_GL_BATCH=0 disables).
 #  - gdi32: render the SolidWorks search results without a trailing NUL glyph.
-#  - win32u: present the SolidWorks status bar after paint and close embedded browser windows.
+#  - win32u: present the SolidWorks status bar after paint, close embedded browser windows,
+#    and preserve mouse capture during live resize.
 # Stop the selected prefix before installing. Only Wine's own DLLs change (gdi32 is a Wine
 # builtin, so its patched PE goes in the bundle and in the prefix); vendor DLLs are untouched.
 # Each replaced file keeps its original next to it as <name>.stock.
@@ -74,6 +75,8 @@ grep -q begin_solidworks_status_paint "$SRC/dlls/win32u/dce.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-status-paint.patch"
 grep -q defer_solidworks_browser_destroy "$SRC/dlls/win32u/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-solidworks-browser-destroy.patch"
+grep -q 'Only that loop should release its capture' "$SRC/dlls/win32u/menu.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/win32u-preserve-sizing-capture.patch"
 export PATH="$(sw_build_path "$BUILD/llvm-mingw/bin")"
 mkdir -p "$ROOT/logs"
 arch -x86_64 make -C "$OBJ" -j8 dlls/winemac.drv/winemac.so dlls/opengl32/opengl32.so \

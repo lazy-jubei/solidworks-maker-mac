@@ -1,0 +1,25 @@
+--- a/dlls/win32u/menu.c
++++ b/dlls/win32u/menu.c
+@@ -682,6 +682,8 @@
+  */
+ BOOL set_window_menu( HWND hwnd, HMENU handle )
+ {
++    GUITHREADINFO gui = { .cbSize = sizeof(gui) };
++
+     TRACE( "(%p, %p);\n", hwnd, handle );
+
+     if (handle && !is_menu( handle ))
+@@ -694,8 +696,11 @@
+         return FALSE;
+
+     hwnd = get_full_window_handle( hwnd );
+-    if (get_capture() == hwnd)
+-        set_capture_window( 0, GUI_INMENUMODE, NULL );  /* release the capture */
++    /* A window can change its menu from WM_SIZE while the sizing loop
++     * still owns the mouse. Only that loop should release its capture. */
++    if (NtUserGetGUIThreadInfo( GetCurrentThreadId(), &gui ) && gui.hwndCapture == hwnd &&
++        !(gui.flags & GUI_INMOVESIZE))
++        set_capture_window( 0, GUI_INMENUMODE, NULL );
+
+     if (handle)
+     {
