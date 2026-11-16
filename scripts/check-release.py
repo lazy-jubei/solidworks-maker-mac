@@ -41,6 +41,13 @@ for relative in paths:
         subprocess.run(['zsh','-n',str(path)],check=True)
     elif path.suffix == '.json':
         json.loads(data)
+# Scripts run directly must be executable in the release archive, which takes modes from git
+# rather than this checkout (core.fileMode may be off on network volumes).
+for line in subprocess.check_output(['git', 'ls-files', '-s', '-z'], cwd=root).decode().split('\0'):
+    if not line: continue
+    mode, _, _, name = line.split(None, 3)
+    if name.endswith('.sh') and (root/name).read_bytes().startswith(b'#!') and mode != '100755':
+        raise SystemExit(f'Script with a shebang is not executable in git: {name}')
 # Local Markdown links must resolve in the release checkout.
 for relative in paths:
     if relative.suffix != '.md': continue
