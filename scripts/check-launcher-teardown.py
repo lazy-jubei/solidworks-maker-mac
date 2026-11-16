@@ -4,6 +4,7 @@ from pathlib import Path
 import os
 import shutil
 import subprocess
+import sys
 import time
 from tempfile import TemporaryDirectory
 
@@ -11,6 +12,9 @@ runner = Path(__file__).resolve().with_name("run-solidworks.sh")
 with TemporaryDirectory(prefix='sw-teardown-') as tmp:
     root = Path(tmp).resolve()
     shutil.copy2(runner, root / runner.name)
+    (root / 'tools').mkdir()
+    scanner = root / 'tools/container-processes.py'
+    shutil.copy2(runner.parent / 'tools' / scanner.name, scanner)
     (root / 'drive_c').mkdir()
     (root / 'env.sh').write_text("""
 ROOT=$TEST_ROOT
@@ -28,7 +32,19 @@ fi
 [[ ! -f "$TEST_ROOT/release-foreign" ]] || exit 1
 print 777
 ''')
-    (root / 'lsof').write_text('''#!/bin/zsh
+    (root / 'lsof').write_text(r'''#!/bin/zsh
+if [[ "$1" == -nP && "$TEST_CASE" == identity ]]; then
+    printf 'p771\x00\nn%s\x00\nn%s\x00\n' "$TEST_ROOT/identity prefix/drive_c/data" "$TEST_ROOT/runtime with spaces/lib/wine.so"
+    printf 'p772\x00\nn%s\x00\nn%s\x00\n' "$TEST_ROOT/identity prefix-other/drive_c/data" "$TEST_ROOT/runtime with spaces/lib/wine.so"
+    printf 'p773\x00\nn%s\x00\nn%s\x00\n' "$TEST_ROOT/identity prefix/drive_c/data" "$TEST_ROOT/runtime with spaces-other/lib/wine.so"
+    printf 'p774\x00\nn%s\x00\n' "$TEST_ROOT/identity prefix/drive_c/data"
+    printf 'p775\x00\nn%s\x00\nn%s\x00\n' "$TEST_ROOT/identity prefix" "$TEST_ROOT/runtime with spaces/lib/wine.so"
+    exit
+fi
+if [[ "$1" == -nP ]]; then
+    touch "$TEST_ROOT/scanned"
+    exit
+fi
 [[ "$1" == -a ]] || exit 1
 if [[ "$3" == 778 ]]; then
     print -r -- "n$TEST_ROOT/drive_c/Program Files/SLDWORKS.exe"
@@ -92,6 +108,11 @@ esac
         (root / name).chmod(0o755)
     env = dict(os.environ, TEST_ROOT=str(root), SW_TENANT='fixture',
                SW_SHUTDOWN_GRACE='3')
+    runtime = root / 'runtime with spaces'
+    result = subprocess.run([sys.executable, str(scanner), str(root / 'identity prefix'), str(runtime)],
+                            env=dict(env, TEST_CASE='identity', PATH=f"{root}{os.pathsep}{env['PATH']}"),
+                            capture_output=True, text=True, check=True)
+    assert result.stdout.splitlines() == ['771', '775'], result.stdout
     for test_case in ['watchdog', 'launcher', 'detached']:
         session = root / test_case
         session.mkdir()
@@ -124,8 +145,9 @@ exit 1
                         result.kill()
             assert monitor.wait(timeout=2) == 0
         assert not list((root / 'logs').glob('.container-teardown.*'))
+        assert (root / 'scanned').exists()
         assert (root / 'calls').read_text().splitlines() == ['wait', 'stop'], (
             test_case, (root / 'calls').read_text())
-        for name in ['calls', 'waiter', 'stopped', 'checked-foreign', 'release-foreign']:
+        for name in ['calls', 'waiter', 'stopped', 'checked-foreign', 'release-foreign', 'scanned']:
             (root / name).unlink(missing_ok=True)
     print('The watchdog, launcher failure and detached CAD exit paths each stopped the monitor before draining the correct prefix through native wineserver.')

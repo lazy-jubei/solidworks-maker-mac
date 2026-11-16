@@ -4,7 +4,8 @@
 # Mount the image first (01-storage.sh). TENANT and REGISTRY come from your own shortcut:
 # C:\users\Public\Desktop\SOLIDWORKS Design.lnk
 set -u
-source "${0:A:h}/env.sh"
+script_dir="${0:A:h}"
+source "$script_dir/env.sh"
 # Set this inside the script: macOS strips DYLD_* variables when starting /bin/zsh.
 # Select the X11 driver separately and restart the prefix before using this option.
 if [[ "${SW_GRAPHICS:-mac}" == x11 ]]; then
@@ -25,7 +26,7 @@ mkdir -p "$LOG_DIR"
 # Installer state controls activation. Removing the setting takes effect after the
 # installer also removes the app-local forwarder.
 if [[ -d "$WINEPREFIX/.sw-intel-renderer" ]]; then
-  renderer="$(python3 "${0:A:h}/tools/intel-renderer.py" check)" || exit 1
+  renderer="$(python3 "$script_dir/tools/intel-renderer.py" check)" || exit 1
   [[ -n "$renderer" ]] || exit 1
   export WINEDLLPATH="$renderer${WINEDLLPATH:+:$WINEDLLPATH}"
   export WINEMETALGL_SW_FORMAT_FALLBACK=1 WINEMETALGL_CLIP_SIBLINGS=1
@@ -92,15 +93,10 @@ fi
 # along with the container. If the install root cannot be identified this prints nothing, which
 # leaves orphans behind rather than killing a process we do not own.
 container_processes() {
-  local pid root="${WINE_APP:-}/Contents/Resources/wine"
+  local root="${WINE_APP:-}/Contents/Resources/wine"
   [[ -d "$root" ]] || root="$(dirname "$(dirname "$(command -v wine 2>/dev/null)")")"
   [[ "$root" == /* ]] || return 0
-  root=${root:A}
-  for pid in $(lsof +D "$WINEPREFIX" 2>/dev/null | awk 'NR>1{print $2}' | sort -u || true); do
-    if lsof -p "$pid" 2>/dev/null | grep -qF "$root/"; then
-      print -r -- "$pid"
-    fi
-  done
+  python3 "$script_dir/tools/container-processes.py" "$WINEPREFIX" "$root"
 }
 
 # SolidWorks leaves its platform behind when it exits: the launcher service, ViewServerV6 and

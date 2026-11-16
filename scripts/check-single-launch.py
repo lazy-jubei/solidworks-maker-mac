@@ -127,13 +127,19 @@ exit "$SINGLE_TEST_STATUS"
                 separate.wait(timeout=10)
 
 
-    # Run one monitor cycle with a visible login. Only the fallback should
-    # move the browser out of the vendor window.
-    for mode, expected in (
-        ('0', ['--list', 'Cancel', 'detach']),
-        ('1', ['--list', 'Cancel']),
+    # Only start the helper for the window that actually needs it.
+    auth = b'10052 #32770 660x456 Authentication Required\r\n'
+    login = b'20130 #32770 1200x1000 Login - 3DEXPERIENCE ID\r\n'
+    for mode, windows, expected in (
+        ('0', b'10458 Afx:fixture 1200x804 splash\r\n', ['--list']),
+        ('0', auth, ['--list', 'Cancel']),
+        ('0', login, ['--list', 'detach']),
+        ('0', auth + login, ['--list', 'Cancel', 'detach']),
+        ('1', auth + login, ['--list', 'Cancel']),
+        ('0', b'10034 Chrome_WidgetWin_1 1200x1000 SolidWorks sign-in (Wine workaround)\r\n',
+         ['--list']),
     ):
-        report = subprocess.CompletedProcess([], 0, stdout=b'Login - 3DEXPERIENCE ID')
+        report = subprocess.CompletedProcess([], 0, stdout=windows)
         with (patch.dict(os.environ, WINEPREFIX=str(prefix), SW_MAC_EMBEDDED_SIGNIN=mode),
               patch.object(sys, 'argv', [monitor[1], str(tools)]),
               patch('time.monotonic', side_effect=[0, 1, 1, 301]),

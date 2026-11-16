@@ -19,12 +19,8 @@ def monitor(tools, stopping):
     lock.truncate()
     lock.write(str(os.getpid()))
     lock.flush()
-    commands = [
-        ["wine", str(tools / 'ConfirmDialog.exe'), "Authentication Required",
-         "eu1-makers.iam.3dexperience.3ds.com", "Cancel"],
-    ]
-    if os.environ.get('SW_MAC_EMBEDDED_SIGNIN') != '1':
-        commands.append(["wine", str(tools / 'WebViewWindow.exe'), "detach"])
+    auth_title = 'Authentication Required'
+    detach_browser = os.environ.get('SW_MAC_EMBEDDED_SIGNIN') != '1'
 
     end = time.monotonic() + 300
     last_login = None
@@ -32,16 +28,23 @@ def monitor(tools, stopping):
         try:
             windows = subprocess.run(['wine', str(tools / 'WinInput.exe'), '--list'],
                                      capture_output=True, timeout=8).stdout
-            if b'3DEXPERIENCE ID' in windows or b'SolidWorks sign-in (Wine workaround)' in windows:
+            rows = (line.split(maxsplit=3) for line in windows.splitlines())
+            titles = [row[3] for row in rows if len(row) == 4]
+            embedded_login = any(b'3DEXPERIENCE ID' in title for title in titles)
+            if embedded_login or b'SolidWorks sign-in (Wine workaround)' in titles:
                 last_login = time.monotonic()
             elif last_login is not None and time.monotonic() - last_login > 10:
                 break
             elif last_login is None and time.monotonic() > end - 120:
                 break
-            for cmd in commands:
-                if stopping():
-                    return
-                subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            if auth_title.encode() in titles and not stopping():
+                subprocess.run(['wine', str(tools / 'ConfirmDialog.exe'), auth_title,
+                                'eu1-makers.iam.3dexperience.3ds.com', 'Cancel'],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=8)
+            if embedded_login and detach_browser and not stopping():
+                subprocess.run(['wine', str(tools / 'WebViewWindow.exe'), 'detach'],
+                               stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, timeout=8)
         except subprocess.TimeoutExpired:
             pass
