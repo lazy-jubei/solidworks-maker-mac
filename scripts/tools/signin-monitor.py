@@ -20,6 +20,7 @@ def monitor(tools, stopping):
     lock.write(str(os.getpid()))
     lock.flush()
     auth_title = 'Authentication Required'
+    update_title = b'3DEXPERIENCE Update'
     detach_browser = os.environ.get('SW_MAC_EMBEDDED_SIGNIN') != '1'
 
     end = time.monotonic() + 300
@@ -30,6 +31,10 @@ def monitor(tools, stopping):
                                      capture_output=True, timeout=8).stdout
             rows = (line.split(maxsplit=3) for line in windows.splitlines())
             titles = [row[3] for row in rows if len(row) == 4]
+            if any(update_title in title for title in titles):
+                # The vendor's update prompt holds startup until the user answers it,
+                # so the sign-in wait starts again once it closes.
+                end = time.monotonic() + 300
             embedded_login = any(b'3DEXPERIENCE ID' in title for title in titles)
             if embedded_login or b'SolidWorks sign-in (Wine workaround)' in titles:
                 last_login = time.monotonic()

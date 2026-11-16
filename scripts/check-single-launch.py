@@ -148,4 +148,26 @@ exit "$SINGLE_TEST_STATUS"
             runpy.run_path(monitor[1], run_name='__main__')
         assert [call.args[0][-1] for call in helpers.call_args_list] == expected
 
-print('Passed: existing session reuse, probe failure refusal, prefix isolation, launch lock recovery, sign-in monitor shutdown and embedded browser handling.')
+
+    # The vendor's update prompt can hold startup past the no-login cutoff. The
+    # monitor must still be waiting when the authentication box appears after it.
+    update = b'10088 #32770 520x300 3DEXPERIENCE Update\r\n'
+    for prompt_until, expected_cancel in ((240, True), (0, False)):
+        clock = [0]
+        def windows_at(command, **kwargs):
+            if command[-1] != '--list':
+                return subprocess.CompletedProcess([], 0, stdout=b'')
+            if clock[0] < prompt_until:
+                return subprocess.CompletedProcess([], 0, stdout=update)
+            return subprocess.CompletedProcess([], 0, stdout=auth if clock[0] >= 300 else b'')
+        with (patch.dict(os.environ, WINEPREFIX=str(prefix), SW_MAC_EMBEDDED_SIGNIN='0'),
+              patch.object(sys, 'argv', [monitor[1], str(tools)]),
+              patch('time.monotonic', side_effect=lambda: clock[0]),
+              patch('time.sleep', side_effect=lambda seconds: clock.__setitem__(0, clock[0] + 60)),
+              patch('subprocess.run', side_effect=windows_at) as helpers):
+            runpy.run_path(monitor[1], run_name='__main__')
+        cancelled = any(call.args[0][-1] == 'Cancel' for call in helpers.call_args_list)
+        assert cancelled == expected_cancel, (prompt_until, cancelled)
+        assert clock[0] < 1000, 'The monitor did not stop after the update prompt closed'
+
+print('Passed: existing session reuse, probe failure refusal, prefix isolation, launch lock recovery, sign-in monitor shutdown, update-prompt wait and embedded browser handling.')
