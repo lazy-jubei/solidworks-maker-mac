@@ -1,13 +1,14 @@
 #!/bin/zsh
-# Build the Intel SolidWorks renderer into a standalone Wine module tree.
+# Build the SolidWorks Enhanced Graphics renderer (WineMetalGL) into a standalone Wine module tree.
+# The output is always x86_64, the architecture of the Wine processes that load it. On Apple
+# Silicon, upstream's build cross-compiles to x86_64 with the native toolchain and runs under Rosetta.
 set -eu
 if (( $# != 3 )); then
     print -u2 'Usage: build-intel-renderer.sh WINE_11_16_SOURCE LLVM_MINGW_BIN NEW_OUTPUT_DIR'
     exit 2
 fi
-if [[ "$(uname -s)" != Darwin || "$(uname -m)" != x86_64 ||
-      "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null || true)" == 1 ]]; then
-    print -u2 'This renderer build is for Intel macOS.'
+if [[ "$(uname -s)" != Darwin ]] || [[ "$(uname -m)" != (x86_64|arm64) ]]; then
+    print -u2 'This renderer build is for macOS on Intel or Apple Silicon.'
     exit 2
 fi
 wine_source=${1:A}
@@ -53,6 +54,10 @@ export PATH="$mingw_bin:$PATH"
 platform="$scratch/module/x86_64-unix"
 cp "$source_dir/build/release/libwinemetalgl.dylib" "$platform/"
 for image in "$platform"/{libwinemetalgl.dylib,winemetalgl.so}; do
+    if [[ "$(lipo -archs "$image")" != x86_64 ]]; then
+        print -u2 "Expected an x86_64-only image: $image"
+        exit 1
+    fi
     codesign --force --sign - "$image"
     codesign --verify --strict "$image"
 done
@@ -65,4 +70,4 @@ mkdir "$scratch/package"
 mv "$scratch/module"/{x86_64-unix,x86_64-windows,i386-windows,SHA256SUMS.txt} "$scratch/package/"
 ditto "$scratch/package" "$output/.wine-module"
 mv "$output/.wine-module" "$output/wine-module"
-print -r -- "Built Intel WineMetalGL at $output/wine-module"
+print -r -- "Built WineMetalGL at $output/wine-module"
