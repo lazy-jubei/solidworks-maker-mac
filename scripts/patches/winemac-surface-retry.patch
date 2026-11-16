@@ -1,0 +1,38 @@
+--- a/dlls/winemac.drv/macdrv.h
++++ b/dlls/winemac.drv/macdrv.h
+@@ -217,4 +217,5 @@
+
+ extern struct macdrv_win_data *get_win_data(HWND hwnd);
++extern BOOL try_get_win_data(HWND hwnd, struct macdrv_win_data **data);
+ extern void release_win_data(struct macdrv_win_data *data);
+ extern void init_win_context(void);
+--- a/dlls/winemac.drv/window.c
++++ b/dlls/winemac.drv/window.c
+@@ -204,4 +204,16 @@
+ }
+
++
++/* A surface flush already holds win32u's surface lock. Do not wait
++ * for a window operation that may need that lock to finish. */
++BOOL try_get_win_data(HWND hwnd, struct macdrv_win_data **data)
++{
++    *data = NULL;
++    if (!hwnd) return TRUE;
++    if (pthread_mutex_trylock(&win_data_mutex)) return FALSE;
++    if (win_datas) *data = (struct macdrv_win_data *)CFDictionaryGetValue(win_datas, hwnd);
++    if (!*data) pthread_mutex_unlock(&win_data_mutex);
++    return TRUE;
++}
+
+ /***********************************************************************
+--- a/dlls/winemac.drv/surface.c
++++ b/dlls/winemac.drv/surface.c
+@@ -148,5 +148,7 @@
+      * had been a target for a D3D swapchain. Hide the client_view so that it doesn't occlude the
+      * content in the window_surface */
+-    if ((data = get_win_data(window_surface->hwnd)))
++    /* Leave the dirty bounds intact so the next flush can finish the handoff. */
++    if (!try_get_win_data(window_surface->hwnd, &data)) return FALSE;
++    if (data)
+     {
+         if (data->client_view)

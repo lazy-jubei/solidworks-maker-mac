@@ -62,6 +62,9 @@ grep -q swBalloonTip "$SRC/dlls/winemac.drv/window.c" \
 # Snapshot Options pixels and repaint scrolls from the controls.
 grep -q macdrv_ScrollDC "$SRC/dlls/winemac.drv/gdi.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-ui-repaint.patch"
+# Leave the surface dirty if its window is being updated on another thread.
+grep -q try_get_win_data "$SRC/dlls/winemac.drv/surface.c" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-surface-retry.patch"
 # Keep SolidWorks status tooltips within the display work area before showing them.
 grep -q 'paintSettleMs:.*constrainTip:' "$SRC/dlls/winemac.drv/cocoa_window.m" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-tooltip-screen.patch"
