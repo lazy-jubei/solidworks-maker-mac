@@ -44,7 +44,21 @@ cd "$WINEPREFIX/drive_c"
 # prefix's launcher never starts - and a launcher that starts while the port is taken binds
 # nothing, which leaves SolidWorks at "Connecting to 3DEXPERIENCE" for the whole session.
 # `net start` is a no-op when the service is already up, so this costs nothing when all is well.
-wine wineboot > /dev/null 2>&1
+# A pending macOS privacy prompt can hold this first Wine startup (see permission-notice.sh).
+wine wineboot > /dev/null 2>&1 &
+boot=$!
+notice=''
+for (( tenths = 0; tenths < ${SW_PERMISSION_NOTICE_DELAY:-20} * 10; tenths++ )); do
+  kill -0 $boot 2>/dev/null || break
+  sleep .1
+done
+if kill -0 $boot 2>/dev/null; then
+  print -r -- 'Wine startup is still waiting; showing the macOS permission notice.' >> "$LOG_DIR/solidworks-run.log"
+  "$script_dir/tools/permission-notice.sh" &
+  notice=$!
+fi
+wait $boot
+[[ -z "$notice" ]] || kill $notice 2>/dev/null
 wine net start 3DEXPERIENCELauncher >> "$LOG_DIR/solidworks-run.log" 2>&1
 if ! curl -s -m 3 -o /dev/null "http://127.0.0.1:20250/iframe?version=1.0&id=health"; then
   print -r -- "No 3DEXPERIENCE launcher answered on 127.0.0.1:20250." >> "$LOG_DIR/solidworks-run.log"

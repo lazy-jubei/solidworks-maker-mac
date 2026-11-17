@@ -17,7 +17,7 @@ with TemporaryDirectory(prefix='sw-single-launch-') as directory:
     base = Path(directory)
     tools = base / 'tools'
     tools.mkdir()
-    for name in ['launch-once.py', 'signin-monitor.py']:
+    for name in ['launch-once.py', 'signin-monitor.py', 'permission-notice.sh']:
         shutil.copy2(root / 'scripts/tools' / name, tools / name)
     probe_path = tools / 'ExistingCad.exe'
     probe_path.write_bytes(b'MZ')
@@ -31,9 +31,29 @@ if [[ "$1" == *WinInput.exe ]]; then
 fi
 [[ "$1" == *ConfirmDialog.exe || "$1" == *WebViewWindow.exe ]] && exit 0
 print probe >> "$SINGLE_TEST_CALLS"
+if [[ "$SINGLE_TEST_STATUS" == stall ]]; then
+    # A pending macOS privacy prompt holds Wine's first file access until someone answers it.
+    for _ in {1..200}; do
+        [[ -f "$SINGLE_TEST_NOTICE" ]] && exit 0
+        if [[ -n "${SW_LAUNCHER_NOTICE:-}" && -s "$SW_LAUNCHER_NOTICE" ]]; then
+            head -1 "$SW_LAUNCHER_NOTICE" > "$SINGLE_TEST_NOTICE.title"
+            exit 0
+        fi
+        sleep .05
+    done
+    exit 1
+fi
+[[ "$SINGLE_TEST_STATUS" == hang ]] && exec sleep 30
 exit "$SINGLE_TEST_STATUS"
 ''')
     probe.chmod(0o755)
+    notice = fakebin / 'osascript'
+    notice.write_text('''#!/bin/zsh
+trap 'touch "$SINGLE_TEST_NOTICE.dismissed"; exit 0' TERM
+touch "$SINGLE_TEST_NOTICE"
+for _ in {1..300}; do sleep .1; done
+''')
+    notice.chmod(0o755)
     runner = base / 'runner'
     runner.write_text('#!' + sys.executable + '\nimport os,sys\n'
                       'from pathlib import Path\n'
@@ -47,7 +67,8 @@ exit "$SINGLE_TEST_STATUS"
     calls = base / 'calls'
     env = dict(os.environ, PATH=str(fakebin) + os.pathsep + os.environ['PATH'],
                WINEPREFIX=str(prefix), SINGLE_TEST_CALLS=str(calls), SINGLE_TEST_STATUS='0',
-               SINGLE_TEST_MONITOR=str(base / 'monitor-started'))
+               SINGLE_TEST_MONITOR=str(base / 'monitor-started'), SINGLE_TEST_NOTICE=str(base / 'notice'),
+               SW_PERMISSION_NOTICE_DELAY='0.5')
     command = [sys.executable, str(tools / 'launch-once.py'), str(tools), str(runner)]
     probe_path.unlink()
     unreadable = subprocess.run(command, env=env, capture_output=True, text=True, timeout=10)
@@ -62,6 +83,34 @@ exit "$SINGLE_TEST_STATUS"
     assert failed.returncode != 0 and 'refusing a duplicate' in failed.stderr
     assert calls.read_text().splitlines() == ['probe']
     calls.unlink()
+    # A stalled probe shows the permission notice, keeps waiting, and dismisses it once Wine
+    # carries on. One that never finishes is still refused, without leaving the notice up.
+    for status, code in (('stall', 0), ('hang', None)):
+        stalled = subprocess.run(command, env=dict(env, SINGLE_TEST_STATUS=status, SW_PERMISSION_WAIT='2'),
+                                 capture_output=True, text=True, timeout=20)
+        assert (base / 'notice').exists() and (base / 'notice.dismissed').exists(), status
+        if code is None:
+            assert stalled.returncode != 0 and 'refusing a duplicate' in stalled.stderr
+        else:
+            assert stalled.returncode == code, stalled.stderr
+        assert calls.read_text().splitlines() == ['probe']
+        for leftover in ('notice', 'notice.dismissed', 'calls'):
+            (base / leftover).unlink()
+    assert not (base / 'notice').exists()
+    # Launched from Finder, the app shows the notice itself while its notice file exists.
+    app_notice = base / 'app-notice'
+    stalled = subprocess.run(command, env=dict(env, SINGLE_TEST_STATUS='stall', SW_LAUNCHER_NOTICE=str(app_notice)),
+                             capture_output=True, text=True, timeout=20)
+    assert stalled.returncode == 0, stalled.stderr
+    assert (base / 'notice.title').read_text().strip() == 'SolidWorks is still starting'
+    assert not (base / 'notice').exists(), 'The Finder launch fell back to osascript'
+    for _ in range(40):
+        if not app_notice.exists():
+            break
+        time.sleep(.05)
+    assert not app_notice.exists(), 'The notice stayed up after Wine carried on'
+    for leftover in ('notice.title', 'calls'):
+        (base / leftover).unlink()
     env['SINGLE_TEST_STATUS'] = '2'
     first = subprocess.Popen(command, env=env, stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -170,4 +219,4 @@ exit "$SINGLE_TEST_STATUS"
         assert cancelled == expected_cancel, (prompt_until, cancelled)
         assert clock[0] < 1000, 'The monitor did not stop after the update prompt closed'
 
-print('Passed: existing session reuse, probe failure refusal, prefix isolation, launch lock recovery, sign-in monitor shutdown, update-prompt wait and embedded browser handling.')
+print('Passed: existing session reuse, probe failure refusal, stalled-probe permission notice (script and app), prefix isolation, launch lock recovery, sign-in monitor shutdown, update-prompt wait and embedded browser handling.')

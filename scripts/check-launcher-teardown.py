@@ -15,6 +15,7 @@ with TemporaryDirectory(prefix='sw-teardown-') as tmp:
     (root / 'tools').mkdir()
     scanner = root / 'tools/container-processes.py'
     shutil.copy2(runner.parent / 'tools' / scanner.name, scanner)
+    shutil.copy2(runner.parent / 'tools/permission-notice.sh', root / 'tools/permission-notice.sh')
     (root / 'drive_c').mkdir()
     (root / 'env.sh').write_text("""
 ROOT=$TEST_ROOT
@@ -54,8 +55,24 @@ else
 fi
 ''')
     (root / 'curl').write_text('#!/bin/zsh\nexit 0\n')
+    # Stands in for the macOS permission notice; it must be dismissed once wineboot finishes.
+    (root / 'osascript').write_text('''#!/bin/zsh
+trap 'touch "$TEST_ROOT/notice-dismissed"; exit 0' TERM
+touch "$TEST_ROOT/notice"
+for _ in {1..300}; do sleep .1; done
+''')
     (root / 'wine').write_text('''#!/bin/zsh
 case "$1:$2" in
+    wineboot:*)
+        # A pending macOS privacy prompt holds Wine's first startup until someone answers it.
+        if [[ "$TEST_CASE" == launcher ]]; then
+            for _ in {1..100}; do
+                [[ -f "$TEST_ROOT/notice" ]] && exit 0
+                sleep .05
+            done
+            exit 1
+        fi
+        ;;
     *CATSTART.exe:*)
         if [[ "$TEST_CASE" == detached ]]; then
             touch "$TEST_ROOT/catstart-returned"
@@ -104,10 +121,11 @@ case "$1" in
         ;;
 esac
 ''')
-    for name in ['pgrep', 'curl', 'lsof', 'wine', 'wineserver']:
+    for name in ['pgrep', 'curl', 'lsof', 'wine', 'wineserver', 'osascript']:
         (root / name).chmod(0o755)
     env = dict(os.environ, TEST_ROOT=str(root), SW_TENANT='fixture',
-               SW_SHUTDOWN_GRACE='3', SW_SESSION_GRACE='2')
+               SW_SHUTDOWN_GRACE='3', SW_SESSION_GRACE='2',
+               SW_PERMISSION_NOTICE_DELAY='1')
     runtime = root / 'runtime with spaces'
     result = subprocess.run([sys.executable, str(scanner), str(root / 'identity prefix'), str(runtime)],
                             env=dict(env, TEST_CASE='identity', PATH=f"{root}{os.pathsep}{env['PATH']}"),
@@ -146,8 +164,16 @@ exit 1
             assert monitor.wait(timeout=2) == 0
         assert not list((root / 'logs').glob('.container-teardown.*'))
         assert (root / 'scanned').exists()
+        # Only the stalled wineboot shows the notice, and finishing wineboot dismisses it.
+        assert (root / 'notice').exists() == (test_case == 'launcher'), test_case
+        for _ in range(40):
+            if (root / 'notice-dismissed').exists() == (test_case == 'launcher'):
+                break
+            time.sleep(.05)
+        assert (root / 'notice-dismissed').exists() == (test_case == 'launcher'), test_case
         assert (root / 'calls').read_text().splitlines() == ['wait', 'stop'], (
             test_case, (root / 'calls').read_text())
-        for name in ['calls', 'waiter', 'stopped', 'checked-foreign', 'release-foreign', 'scanned']:
+        for name in ['calls', 'waiter', 'stopped', 'checked-foreign', 'release-foreign', 'scanned',
+                     'notice', 'notice-dismissed']:
             (root / name).unlink(missing_ok=True)
-    print('The watchdog, launcher failure and detached CAD exit paths each stopped the monitor before draining the correct prefix through native wineserver.')
+    print('A stalled wineboot showed and then dismissed the permission notice. The watchdog, launcher failure and detached CAD exit paths each stopped the monitor before draining the correct prefix through native wineserver.')
