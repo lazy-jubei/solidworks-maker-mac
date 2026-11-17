@@ -59,7 +59,7 @@ grep -q performPendingTooltipOrder "$SRC/dlls/winemac.drv/cocoa_window.m" \
 # Keep Cocoa in step with Wine when a minimize or restore is still animating: a window restored
 # mid-minimize stayed in the Dock (Qt opens windows minimized then restored, which hid the
 # 3DEXPERIENCE hotfix installer), and a window hidden mid-restore came back on screen.
-grep -q wineWantsMinimized "$SRC/dlls/winemac.drv/cocoa_window.h" \
+grep -q orderedOutForWine "$SRC/dlls/winemac.drv/cocoa_window.h" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-restore-during-minimize.patch"
 # SOLIDWORKS uses a custom window class for its status-bar warning balloon.
 grep -q swBalloonTip "$SRC/dlls/winemac.drv/window.c" \
