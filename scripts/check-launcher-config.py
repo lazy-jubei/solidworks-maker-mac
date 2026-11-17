@@ -20,7 +20,8 @@ with TemporaryDirectory(prefix='sw-launcher-config-') as temporary:
     project=temporary/'checkout with spaces'
     scripts=project/'scripts'
     for name in ('env.sh','run-solidworks.sh','10-fresh-signin.sh','tools/signin-monitor.py','tools/launch-once.py',
-                 'tools/MacLauncher.swift','tools/intel-renderer.py','tools/container-processes.py'):
+                 'tools/MacLauncher.swift','tools/intel-renderer.py','tools/container-processes.py',
+                 'tools/ConfirmDialog.cs','tools/WebViewWindow.cs','tools/WinInput.cs','tools/ExistingCad.cs'):
         target=scripts/name;target.parent.mkdir(parents=True,exist_ok=True)
         shutil.copy2(root/'scripts'/name,target)
     main_volume=temporary/'main volume'
@@ -103,7 +104,16 @@ with TemporaryDirectory(prefix='sw-launcher-config-') as temporary:
                               env=dict(os.environ, SW_MAC_EMBEDDED_SIGNIN='1'),
                               capture_output=True, text=True, check=True, timeout=10)
 
-    assert signin(0).stdout.strip() == 'fallback'
+    # Helpers without a matching source stamp are rebuilt; a failed build keeps the old copy.
+    stale = signin(0)
+    assert stale.stdout.strip() == 'fallback'
+    assert 'Could not rebuild WebViewWindow.exe; using the existing copy.' in stale.stderr, stale.stderr
+    assert (tool_dir / 'WebViewWindow.exe').exists() and not list(tool_dir.glob('*.new.exe'))
+    for helper in ('ConfirmDialog', 'WebViewWindow', 'WinInput', 'ExistingCad'):
+        source = (scripts / 'tools' / (helper + '.cs')).read_bytes()
+        (tool_dir / (helper + '.source.sha256')).write_text(hashlib.sha256(source).hexdigest() + '\n')
+    current = signin(0)
+    assert current.stdout.strip() == 'fallback' and 'rebuild' not in current.stderr, current.stderr
     assert signin(1).stdout.strip() == '1'
     modules[1].write_bytes(b'updated module')
     mismatch = signin(1)
@@ -111,4 +121,4 @@ with TemporaryDirectory(prefix='sw-launcher-config-') as temporary:
     marker.unlink()
     assert signin(1).stdout.strip() == 'fallback'
 
-print('Launcher configuration passed: custom main paths, isolated fresh prefix, shared-prefix/image refusal, default images, paths with spaces and embedded sign-in fallback.')
+print('Launcher configuration passed: custom main paths, isolated fresh prefix, shared-prefix/image refusal, default images, paths with spaces, stale helper rebuild and embedded sign-in fallback.')

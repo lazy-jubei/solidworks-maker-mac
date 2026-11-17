@@ -4,6 +4,26 @@
 # Enter credentials in the vendor's form; this script never reads them.
 set -eu
 source "${0:A:h}/env.sh"
+# A plain Update refreshes scripts only, so a helper built by an older release keeps its old
+# behaviour (the sign-in page once sat in the screen corner, leaving the login window blank).
+# Rebuild any helper whose shipped source changed; keep the existing copy if that fails.
+for helper in ConfirmDialog WebViewWindow WinInput ExistingCad; do
+  source_file="${0:A:h}/tools/$helper.cs"
+  [[ -f "$source_file" ]] || continue
+  sum=$(shasum -a 256 "$source_file" | cut -d ' ' -f 1)
+  stamp="$VOL/tools/$helper.source.sha256"
+  [[ -f "$VOL/tools/$helper.exe" && "$(cat "$stamp" 2>/dev/null)" == "$sum" ]] && continue
+  mkdir -p "$VOL/tools"
+  if WINEDEBUG=-all wine 'C:\windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /platform:x64 \
+       /target:exe "/out:$(winepath -w "$VOL/tools/$helper.new.exe")" "$(winepath -w "$source_file")" >/dev/null 2>&1 &&
+     [[ -s "$VOL/tools/$helper.new.exe" ]]; then
+    mv -f "$VOL/tools/$helper.new.exe" "$VOL/tools/$helper.exe"
+    print -r -- "$sum" > "$stamp"
+  else
+    rm -f "$VOL/tools/$helper.new.exe"
+    print -u2 "Could not rebuild $helper.exe; using the existing copy."
+  fi
+done
 for helper in ConfirmDialog WebViewWindow WinInput ExistingCad; do
   [[ -f "$VOL/tools/$helper.exe" ]] || { print -u2 "Missing $VOL/tools/$helper.exe (compile scripts/tools/$helper.cs with .NET Framework64 csc.exe)"; exit 1; }
 done
