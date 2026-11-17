@@ -1,37 +1,33 @@
 # SOLIDWORKS Maker on Mac
 
-Run SOLIDWORKS for Makers on macOS with Wine.
+SOLIDWORKS for Makers on macOS with Wine.
 Supports both Apple Silicon and Intel Macs.
 
 ![SOLIDWORKS on macOS](assets/solidworks.png)
 
 ## Install
 
-Paste this into Terminal:
+Paste this into the Terminal:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/lazy-jubei/solidworks-maker-mac/main/install.sh -o /tmp/solidworks-maker-install.sh && zsh /tmp/solidworks-maker-install.sh
 ```
-
-An installer window opens and walks you through the rest. You only need to do two things:
-
-1. Sign in to your SolidWorks Maker account in the bundled Chrome window and download the
+Sign in to your SolidWorks Maker account in the bundled Chrome window and download the
 3DEXPERIENCE Launcher at the start.
-2. Click Install SolidWorks in that Chrome window at the end.
 
-Everything in between runs on its own (30–60 minutes the first time). If you close Chrome
-too early, click Relaunch Chrome in the installer window.
-
-After setup, open **SolidWorks (Wine)** in Applications.
+After the setup, you can open **SolidWorks (Wine)** in your Applications.
 
 ![The SolidWorks Maker installer window](assets/installer.png)
 
 ## Update
 
-Run the install command again. If an installation is found, click **Update** in the
-installer window. Your SOLIDWORKS installation, settings and CAD files are kept.
-To update Wine as well, quit SolidWorks and Wine before selecting **Also update Wine
-patches and browser graphics** in the installer window.
+Run the same [install command](#install) again. When the installer detects your
+existing setup, click **Update**. Your SOLIDWORKS installation, settings and CAD
+files are preserved.
+
+To include Wine patches and browser graphics in the update, quit SOLIDWORKS and
+Wine, then select **Also update Wine patches and browser graphics** in the
+installer window before clicking **Update**.
 
 ## Details
 
