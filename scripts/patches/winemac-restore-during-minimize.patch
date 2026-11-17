@@ -1,0 +1,114 @@
+--- a/dlls/winemac.drv/cocoa_window.h
++++ b/dlls/winemac.drv/cocoa_window.h
+@@ -35,6 +35,9 @@
+     BOOL maximized;
+     BOOL fullscreen;
+     BOOL pendingMinimize;
++    BOOL wineWantsMinimized;    /* the minimized state Wine last asked for */
++    BOOL miniaturizingForWine;  /* a miniaturize: this window started for Wine is under way */
++    BOOL orderedOutForWine;     /* Wine hid the window and has not shown it again */
+     BOOL pendingOrderOut;
+     void (^pendingTooltipOrder)(void);
+     NSUInteger tooltipOrderGeneration;
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -1532,6 +1532,7 @@
+         {
+             macdrv_event_mask discard = event_mask_for_type(WINDOW_DID_UNMINIMIZE);
+ 
++            wineWantsMinimized = state->minimized;
+             pendingMinimize = FALSE;
+             if (state->minimized && ![self isMiniaturized])
+             {
+@@ -1555,6 +1556,7 @@
+                     else
+                     {
+                         [self setStyleMask:([self styleMask] | NSWindowStyleMaskMiniaturizable)];
++                        miniaturizingForWine = TRUE;
+                         [super miniaturize:nil];
+                         discard |= event_mask_for_type(WINDOW_BROUGHT_FORWARD) |
+                                    event_mask_for_type(WINDOW_GOT_FOCUS) |
+@@ -1928,6 +1930,7 @@
+     - (void) orderBelow:(WineWindow*)prev orAbove:(WineWindow*)next activate:(BOOL)activate
+     {
+         WineApplicationController* controller = [WineApplicationController sharedController];
++        orderedOutForWine = FALSE;
+         if (![self isMiniaturized])
+         {
+             BOOL needAdjustWindowLevels = FALSE;
+@@ -2030,6 +2033,7 @@
+             if (pendingMinimize)
+             {
+                 [self setStyleMask:([self styleMask] | NSWindowStyleMaskMiniaturizable)];
++                miniaturizingForWine = TRUE;
+                 [super miniaturize:nil];
+                 pendingMinimize = FALSE;
+             }
+@@ -2113,6 +2117,7 @@
+         BOOL wasVisible = [self isVisible];
+         BOOL wasOnActiveSpace = [self isOnActiveSpace];
+ 
++        orderedOutForWine = TRUE;
+         [pendingTooltipOrder release];
+         pendingTooltipOrder = nil;
+         [self endWindowDragging];
+@@ -2133,8 +2138,9 @@
+ 
+         pendingOrderOut = FALSE;
+ 
++        /* A restore that Wine asked for may still be animating out of the Dock. */
+         if ([self isMiniaturized])
+-            pendingMinimize = TRUE;
++            pendingMinimize = wineWantsMinimized;
+ 
+         WineWindow* parent = (WineWindow*)self.parentWindow;
+         if ([parent isKindOfClass:[WineWindow class]])
+@@ -2784,6 +2790,10 @@
+     /* We don't call this.  It's the action method of the items in the Window menu. */
+     - (void) makeKeyAndOrderFront:(id)sender
+     {
++        /* AppKit also calls this when a deminiaturize finishes, which can be after Wine has hidden
++         * the window (a restore followed at once by a hide). Leave a hidden window hidden. */
++        if (orderedOutForWine)
++            return;
+         if ([self isMiniaturized])
+             [self deminiaturize:nil];
+         [self orderBelow:nil orAbove:nil activate:NO];
+@@ -3230,6 +3240,7 @@
+         if (!ignore_windowDeminiaturize)
+             [self postDidUnminimizeEvent];
+         ignore_windowDeminiaturize = FALSE;
++        miniaturizingForWine = FALSE;
+ 
+         [self becameEligibleParentOrChild];
+ 
+@@ -3298,6 +3309,29 @@
+     - (void)windowDidMiniaturize:(NSNotification *)notification
+     {
+         macdrv_event* event;
++        BOOL forWine = miniaturizingForWine;
++
++        miniaturizingForWine = FALSE;
++        /* Wine hid the window while that animation was running, so it was ordered out while not yet
++         * miniaturized and Cocoa still finished the minimize. Take it out of the Dock the way
++         * doOrderOut does for a minimized window, keeping the state Wine asked for. */
++        if (forWine && orderedOutForWine)
++        {
++            pendingMinimize = wineWantsMinimized;
++            fakingClose = TRUE;
++            [self close];
++            fakingClose = FALSE;
++            return;
++        }
++        /* Wine restored the window while the minimize animation it asked for was still running,
++         * when -isMiniaturized was not yet true, so the restore was skipped. Qt shows windows
++         * minimized and immediately restored. Undo it rather than reporting a minimize. */
++        if (forWine && !wineWantsMinimized)
++        {
++            ignore_windowDeminiaturize = TRUE;
++            [self deminiaturize:nil];
++            return;
++        }
+ 
+         if (fullscreen && [self isOnActiveSpace])
+             [[WineApplicationController sharedController] updateFullscreenWindows];

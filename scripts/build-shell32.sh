@@ -37,6 +37,7 @@ if [[ ! -d "$SRC" ]]; then
   python3 -I "$PATCHES/shell32-fileop-copy.py" "$SRC"
   python3 -I "$PATCHES/wininet-websocket-stubs.py" "$SRC"
   python3 -I "$PATCHES/wininet-cookie2.py" "$SRC"
+  python3 -I "$PATCHES/wininet-cas-auth-cancel.py" "$SRC"
   python3 -I "$PATCHES/services-elevated.py" "$SRC"
   python3 -I "$PATCHES/msi-addlocal-parents.py" "$SRC"
   python3 -I "$PATCHES/wow64-commit-limit.py" "$SRC"
@@ -46,6 +47,7 @@ if [[ ! -d "$SRC" ]]; then
 else
   cp "$PATCHES/shell32-zipfolder.c" "$SRC/dlls/shell32/zipfolder.c"
   python3 -I "$PATCHES/wininet-cookie2.py" "$SRC"
+  python3 -I "$PATCHES/wininet-cas-auth-cancel.py" "$SRC"
   python3 -I "$PATCHES/kernelbase-standard-integrity.py" "$SRC"
   grep -q SW_REPORT_ARM64 "$SRC/dlls/kernelbase/process.c" || python3 -I "$PATCHES/kernelbase-report-arm64.py" "$SRC"
   grep -q 'if (!lpLayout) return FALSE' "$SRC/dlls/comctl32/header.c" || python3 -I "$PATCHES/comctl32-header-layout.py" "$SRC"

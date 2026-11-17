@@ -44,7 +44,7 @@ def monitor(tools, stopping):
                 break
             if auth_title.encode() in titles and not stopping():
                 subprocess.run(['wine', str(tools / 'ConfirmDialog.exe'), auth_title,
-                                'eu1-makers.iam.3dexperience.3ds.com', 'Cancel'],
+                                '.iam.3dexperience.3ds.com', 'Cancel'],
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                stderr=subprocess.DEVNULL, timeout=8)
             if embedded_login and detach_browser and not stopping():

@@ -140,17 +140,54 @@ stop_container() {
   fi
 }
 
-cad_running_in_prefix() {
+# exe_running_in_prefix PATTERN NAME: a process whose mapped executable is NAME from this prefix.
+exe_running_in_prefix() {
   local pid mapped drive="$WINEPREFIX/drive_c"
   drive=${drive:A}
-  for pid in ${(f)"$(pgrep -if 'sldworks[.]exe' || true)"}; do
+  for pid in ${(f)"$(pgrep -if "$1" || true)"}; do
     for mapped in ${(f)"$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null)"}; do
-      if [[ "$mapped" == "n$drive/"* && "${mapped:l}" == */sldworks.exe ]]; then
+      if [[ "$mapped" == "n$drive/"* && "${mapped:l}" == */$2 ]]; then
         return 0
       fi
     done
   done
   return 1
+}
+
+cad_running_in_prefix() {
+  exe_running_in_prefix 'sldworks[.]exe' sldworks.exe
+}
+
+# The launcher's "Update" button hands over to SWXDesktopUpdate.exe and exits. That downloads
+# the hotfix through the 3DEXPERIENCE Launcher, which runs setup_noUAC.exe; the updater can exit
+# before it finishes. setup_noUAC.exe stays until the install is done, so msiexec.exe is not
+# watched: Wine's msiexec /V service never exits on its own and would hold teardown forever.
+session_running_in_prefix() {
+  cad_running_in_prefix ||
+    exe_running_in_prefix 'swxdesktopupdate[.]exe' swxdesktopupdate.exe ||
+    exe_running_in_prefix 'setup_nouac[.]exe' setup_nouac.exe
+}
+
+# Wait until the session has really ended. The updater hands its download to the Launcher service
+# before setup_noUAC.exe appears, so one empty poll is not enough: require SW_SESSION_GRACE seconds
+# with nothing running. CAD may run for days, but an update alone that outlives SW_UPDATE_TIMEOUT
+# has hung (its page once stalled in a GPU crash loop); stop waiting so the launch lock is freed.
+wait_for_session_end() {
+  local quiet=0 started=$SECONDS
+  while (( quiet < ${SW_SESSION_GRACE:-10} )); do
+    if cad_running_in_prefix; then
+      quiet=0 started=$SECONDS
+    elif session_running_in_prefix; then
+      quiet=0
+      if (( SECONDS - started > ${SW_UPDATE_TIMEOUT:-7200} )); then
+        print -r -- "The 3DEXPERIENCE update has not finished after ${SW_UPDATE_TIMEOUT:-7200}s; stopping Wine" >> "$LOG_DIR/solidworks-run.log"
+        return
+      fi
+    else
+      (( quiet += 2 ))
+    fi
+    sleep 2
+  done
 }
 
 # A force-quit or a crash can leave CATSTART blocked in a call that never returns. Watch
@@ -166,9 +203,7 @@ cad_running_in_prefix() {
     sleep 1
   done
   if [[ "$seen" == 1 ]]; then
-    while cad_running_in_prefix; do
-      sleep 2
-    done
+    wait_for_session_end
     if mkdir "$TEARDOWN_MARKER" 2>/dev/null; then
       stop_container
     fi
@@ -184,11 +219,9 @@ launch_status=$?
 if mkdir "$TEARDOWN_MARKER" 2>/dev/null; then
   kill "$watchdog" 2>/dev/null
   wait "$watchdog" 2>/dev/null
-  # CATSTART can return successfully while the CAD process still owns the session.
-  # Keep both the launch lock and its sign-in monitor until that process exits.
-  while cad_running_in_prefix; do
-    sleep 2
-  done
+  # CATSTART can return successfully while the CAD process or an update still owns the
+  # session. Keep both the launch lock and its sign-in monitor until they exit.
+  wait_for_session_end
   stop_container
 else
   wait "$watchdog" 2>/dev/null

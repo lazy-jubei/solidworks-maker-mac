@@ -107,7 +107,7 @@ esac
     for name in ['pgrep', 'curl', 'lsof', 'wine', 'wineserver']:
         (root / name).chmod(0o755)
     env = dict(os.environ, TEST_ROOT=str(root), SW_TENANT='fixture',
-               SW_SHUTDOWN_GRACE='3')
+               SW_SHUTDOWN_GRACE='3', SW_SESSION_GRACE='2')
     runtime = root / 'runtime with spaces'
     result = subprocess.run([sys.executable, str(scanner), str(root / 'identity prefix'), str(runtime)],
                             env=dict(env, TEST_CASE='identity', PATH=f"{root}{os.pathsep}{env['PATH']}"),

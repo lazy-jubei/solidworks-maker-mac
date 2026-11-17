@@ -6,10 +6,13 @@ manager="$ROOT/scripts/tools/intel-renderer.py"
 server="$WINE_APP/Contents/Resources/wine/bin/wineserver"
 setting="${SW_INTEL_ENHANCED_GRAPHICS:-auto}"
 supported=0
+probe_failed=0
+device=
 if [[ "$setting" != 0 ]]; then
     macos_major="$(sw_vers -productVersion | cut -d. -f1)"
     if (( macos_major >= 15 )); then
-        device=$(xcrun swift -e 'import Metal; print(MTLCreateSystemDefaultDevice()?.name ?? "")' 2>/dev/null) || device=
+        # A failed probe (for example an Xcode licence not yet accepted) says nothing about the GPU.
+        device=$(xcrun swift -e 'import Metal; print(MTLCreateSystemDefaultDevice()?.name ?? "")' 2>/dev/null) || probe_failed=1
         # Tested on an RX 6900 XT (Intel) and an M4 (Apple Silicon, through Rosetta).
         if (( SW_HOST_ARM64 )); then
             if [[ "$device" == Apple\ M* ]]; then supported=1; fi
@@ -22,6 +25,10 @@ if (( ! supported )); then
     if [[ "$setting" == 1 ]]; then
         print -u2 'Enhanced Graphics requires macOS 15 or newer on an Apple Silicon Mac, or an Intel Mac with an AMD Radeon default Metal device.'
         exit 2
+    fi
+    if (( probe_failed )) && [[ "$setting" == auto ]]; then
+        print -u2 'Could not identify the Metal device; leaving the renderer setting unchanged.'
+        exit 0
     fi
     if [[ -d "$WINEPREFIX/.sw-intel-renderer" ]]; then
         python3 "$ROOT/scripts/tools/require-stopped.py" "$server"

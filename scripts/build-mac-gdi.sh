@@ -56,6 +56,11 @@ grep -q 'The SOLIDWORKS sidebar has a shaped edge' "$SRC/dlls/winemac.drv/window
 # Wait for tooltip pixels before ordering the popup onto the screen.
 grep -q performPendingTooltipOrder "$SRC/dlls/winemac.drv/cocoa_window.m" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-tooltip-first-paint.patch"
+# Keep Cocoa in step with Wine when a minimize or restore is still animating: a window restored
+# mid-minimize stayed in the Dock (Qt opens windows minimized then restored, which hid the
+# 3DEXPERIENCE hotfix installer), and a window hidden mid-restore came back on screen.
+grep -q wineWantsMinimized "$SRC/dlls/winemac.drv/cocoa_window.h" \
+  || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-restore-during-minimize.patch"
 # SOLIDWORKS uses a custom window class for its status-bar warning balloon.
 grep -q swBalloonTip "$SRC/dlls/winemac.drv/window.c" \
   || patch -d "$SRC" -p1 -s -N < "$ROOT/scripts/patches/winemac-solidworks-balloon-first-paint.patch"
